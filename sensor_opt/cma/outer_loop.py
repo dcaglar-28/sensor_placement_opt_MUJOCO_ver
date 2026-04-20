@@ -97,59 +97,99 @@ def run_outer_loop(
         eval_times: List[float] = []
         fidelities: List[str] = []
 
-        for vec in solutions:
-            config = decode(vec, mounting_slots, sensor_budget)
+        configs = [decode(vec, mounting_slots, sensor_budget) for vec in solutions]
 
+        # Batched path: if we have a BaseEvaluator (fast/mid/slow) provided directly,
+        # use its run_batch hook to evaluate the entire population.
+        if evaluator is None and base_evaluator is not None and evaluator_fn is None:
             try:
-                eval_result = _evaluate_candidate(
-                    config=config,
-                    cfg=cfg,
+                metrics_list = base_evaluator.run_batch(
+                    configs=configs,
                     sensor_models=sensor_models,
-                    loss_cfg=loss_cfg,
                     n_episodes=n_episodes,
-                    noise_std=noise_std,
                     rng=rng,
-                    evaluator_fn=evaluator_fn,
-                    evaluator=evaluator,
-                    base_evaluator=base_evaluator,
                 )
+                for config, metrics in zip(configs, metrics_list, strict=False):
+                    lr = compute_loss(
+                        metrics=metrics,
+                        config=config,
+                        sensor_models=sensor_models,
+                        weights={
+                            "alpha": loss_cfg["alpha"],
+                            "beta": loss_cfg["beta"],
+                            "gamma": loss_cfg["gamma"],
+                        },
+                        max_cost_usd=loss_cfg.get("max_cost_usd", 10_000.0),
+                        hardware_constraints=cfg.get("hardware", {}),
+                    )
+                    losses.append(lr.total)
+                    loss_results.append(lr)
+                    eval_times.append(0.0)
+                    fidelities.append("batched")
+                    global_configs.append(config)
+                    global_objectives.append(dict(lr.objectives or {}))
             except Exception as e:
-                print(f"[CMA-ES] Evaluator error: {e}")
+                print(f"[CMA-ES] Batched evaluator error: {e}")
                 traceback.print_exc()
-                fallback_metrics = EvalMetrics(
-                    collision_rate=1.0,
-                    blind_spot_fraction=1.0,
-                    mean_goal_success=0.0,
-                    n_episodes=n_episodes,
-                )
-                fallback_lr = compute_loss(
-                    metrics=fallback_metrics,
-                    config=config,
-                    sensor_models=sensor_models,
-                    weights={
-                        "alpha": loss_cfg["alpha"],
-                        "beta":  loss_cfg["beta"],
-                        "gamma": loss_cfg["gamma"],
-                    },
-                    max_cost_usd=loss_cfg.get("max_cost_usd", 10_000.0),
-                    hardware_constraints=cfg.get("hardware", {}),
-                )
-                eval_result = EvaluationResult(
-                    metrics=fallback_metrics,
-                    loss=fallback_lr,
-                    objectives=dict(fallback_lr.objectives or {}),
-                    fidelity="fallback",
-                    evaluation_time_sec=0.0,
-                )
+                # Fall back to the scalar evaluation path below.
+                losses.clear()
+                loss_results.clear()
+                eval_times.clear()
+                fidelities.clear()
+                global_configs = global_configs[:-len(configs)]
+                global_objectives = global_objectives[:-len(configs)]
 
-            lr = eval_result.loss
-            losses.append(lr.total)
-            loss_results.append(lr)
-            eval_times.append(float(eval_result.evaluation_time_sec))
-            fidelities.append(eval_result.fidelity)
+        if not losses:
+            for config in configs:
+                try:
+                    eval_result = _evaluate_candidate(
+                        config=config,
+                        cfg=cfg,
+                        sensor_models=sensor_models,
+                        loss_cfg=loss_cfg,
+                        n_episodes=n_episodes,
+                        noise_std=noise_std,
+                        rng=rng,
+                        evaluator_fn=evaluator_fn,
+                        evaluator=evaluator,
+                        base_evaluator=base_evaluator,
+                    )
+                except Exception as e:
+                    print(f"[CMA-ES] Evaluator error: {e}")
+                    traceback.print_exc()
+                    fallback_metrics = EvalMetrics(
+                        collision_rate=1.0,
+                        blind_spot_fraction=1.0,
+                        mean_goal_success=0.0,
+                        n_episodes=n_episodes,
+                    )
+                    fallback_lr = compute_loss(
+                        metrics=fallback_metrics,
+                        config=config,
+                        sensor_models=sensor_models,
+                        weights={
+                            "alpha": loss_cfg["alpha"],
+                            "beta":  loss_cfg["beta"],
+                            "gamma": loss_cfg["gamma"],
+                        },
+                        max_cost_usd=loss_cfg.get("max_cost_usd", 10_000.0),
+                        hardware_constraints=cfg.get("hardware", {}),
+                    )
+                    eval_result = EvaluationResult(
+                        metrics=fallback_metrics,
+                        loss=fallback_lr,
+                        objectives=dict(fallback_lr.objectives or {}),
+                        fidelity="fallback",
+                        evaluation_time_sec=0.0,
+                    )
 
-            global_configs.append(config)
-            global_objectives.append(dict(eval_result.objectives))
+                lr = eval_result.loss
+                losses.append(lr.total)
+                loss_results.append(lr)
+                eval_times.append(float(eval_result.evaluation_time_sec))
+                fidelities.append(eval_result.fidelity)
+                global_configs.append(config)
+                global_objectives.append(dict(eval_result.objectives))
 
         es_losses = list(losses)
         if es_losses and float(np.max(es_losses) - np.min(es_losses)) == 0.0:

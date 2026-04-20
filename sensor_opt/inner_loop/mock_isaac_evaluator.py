@@ -53,6 +53,20 @@ class MockIsaacEvaluator(BaseEvaluator):
             n_episodes=n_episodes,
         )
 
+    def run_batch(
+        self,
+        configs: list[SensorConfig],
+        sensor_models: dict,
+        n_episodes: int = 15,
+        rng: np.random.Generator | None = None,
+    ) -> list[EvalMetrics]:
+        # Mock "batched" mode: still sequential, but matches the interface that
+        # a real Isaac Sim backend would implement (e.g., vectorized envs).
+        return [
+            self.run(config=c, sensor_models=sensor_models, n_episodes=n_episodes, rng=rng)
+            for c in configs
+        ]
+
 
 def _clamp(v: float, lo: float = 0.0, hi: float = 1.0) -> float:
     return max(lo, min(hi, float(v)))
