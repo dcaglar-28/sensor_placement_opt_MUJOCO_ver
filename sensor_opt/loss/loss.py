@@ -11,6 +11,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict
 
+import numpy as np
+
+try:
+    import jax.numpy as jnp
+except ImportError:  # pragma: no cover - fallback for environments without JAX
+    jnp = None
+
 from sensor_opt.encoding.config import SensorConfig
 
 
@@ -42,16 +49,18 @@ def compute_loss(
     weights: dict,
     max_cost_usd: float = 10_000.0,
 ) -> LossResult:
+    xp = _array_lib()
+
     alpha = weights["alpha"]
     beta  = weights["beta"]
     gamma = weights["gamma"]
 
-    collision_term = alpha * _clamp(float(metrics.collision_rate))
-    blind_term     = beta  * _clamp(float(metrics.blind_spot_fraction))
+    collision_term = float(alpha * xp.clip(float(metrics.collision_rate), 0.0, 1.0))
+    blind_term     = float(beta  * xp.clip(float(metrics.blind_spot_fraction), 0.0, 1.0))
 
     cost_usd    = _compute_effective_cost(config, sensor_models)
-    cost_penalty = _clamp(cost_usd / max_cost_usd)
-    cost_term   = gamma * cost_penalty
+    cost_penalty = float(xp.clip(cost_usd / max_cost_usd, 0.0, 1.0))
+    cost_term   = float(gamma * cost_penalty)
 
     total = collision_term + blind_term + cost_term
 
@@ -69,8 +78,14 @@ def compute_loss(
     )
 
 
+def _array_lib():
+    """Use JAX arrays when available, otherwise NumPy."""
+    return jnp if jnp is not None else np
+
+
 def _clamp(v: float, lo: float = 0.0, hi: float = 1.0) -> float:
-    return max(lo, min(hi, v))
+    xp = _array_lib()
+    return float(xp.clip(v, lo, hi))
 
 
 def _compute_effective_cost(config: SensorConfig, sensor_models: dict) -> float:
