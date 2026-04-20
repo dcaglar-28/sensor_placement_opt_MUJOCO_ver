@@ -14,6 +14,19 @@ from sensor_opt.evaluation.base import BaseEvaluator
 from sensor_opt.loss.loss import EvalMetrics
 
 
+def _chunked(seq: list, chunk_size: int):
+    """
+    Yield (start_index, chunk_list) pairs.
+
+    Kept here (instead of a shared utils module) so the Isaac integration can be
+    copied into an Isaac Sim project without extra dependencies.
+    """
+    if chunk_size <= 0:
+        raise ValueError("chunk_size must be >= 1")
+    for start in range(0, len(seq), chunk_size):
+        yield start, seq[start : start + chunk_size]
+
+
 class IsaacSimEvaluator(BaseEvaluator):
     """
     Isaac Sim integration layer placeholder.
@@ -31,6 +44,14 @@ class IsaacSimEvaluator(BaseEvaluator):
 
     def __init__(self, isaac_sim_cfg: dict | None = None):
         self.isaac_sim_cfg = isaac_sim_cfg or {}
+        # Expected to be provided by the user’s Isaac-side integration.
+        # Must support:
+        #   - reconfigure_sensors(env_idx, config, sensor_models)
+        #   - run_rollouts(n_episodes, rng) -> list[EvalMetrics] (len == num_envs)
+        self.env = self.isaac_sim_cfg.get("env", None)
+        self.num_envs = int(self.isaac_sim_cfg.get("num_envs", 1))
+        if self.num_envs < 1:
+            raise ValueError("isaac_sim_cfg['num_envs'] must be >= 1")
 
     def run(
         self,
@@ -39,10 +60,79 @@ class IsaacSimEvaluator(BaseEvaluator):
         n_episodes: int = 15,
         rng: np.random.Generator | None = None,
     ) -> EvalMetrics:
-        raise NotImplementedError(
-            "Isaac Sim evaluator not yet implemented. "
-            "Run with --dummy flag or use mock_isaac mode."
-        )
+        # Keep `run()` working even when the optimizer calls single evaluations.
+        return self.run_batch(
+            configs=[config],
+            sensor_models=sensor_models,
+            n_episodes=n_episodes,
+            rng=rng,
+        )[0]
+
+    def run_batch(
+        self,
+        configs: list[SensorConfig],
+        sensor_models: dict,
+        n_episodes: int = 15,
+        rng: np.random.Generator | None = None,
+    ) -> list[EvalMetrics]:
+        """
+        Evaluate multiple configs using parallel Isaac Sim environments.
+
+        Mechanism:
+        - Process candidates in chunks of size `self.num_envs`.
+        - For each chunk, reconfigure sensors for env slots [0..k-1] only.
+        - Run rollouts for all envs simultaneously (Isaac-side vectorized stepping).
+        - Collect metrics for the active env slots and append them in input order.
+
+        Ordering:
+        - Returned list matches `configs` order exactly, including the final partial chunk.
+
+        Determinism:
+        - Uses the provided `rng` as a seed source; each chunk gets a derived RNG so
+          repeated runs with the same initial RNG state are reproducible.
+        """
+        if rng is None:
+            rng = np.random.default_rng()
+
+        if not configs:
+            return []
+
+        if self.env is None:
+            raise NotImplementedError(
+                "IsaacSimEvaluator requires an Isaac environment instance. "
+                "Provide it via isaac_sim_cfg={'env': <your_env>, 'num_envs': N}."
+            )
+
+        out: list[EvalMetrics] = []
+
+        # Derive per-chunk RNGs deterministically from the provided generator.
+        # This avoids accidental dependence on internal Isaac stepping order.
+        for _, chunk in _chunked(list(configs), self.num_envs):
+            k = len(chunk)
+
+            # (a) Reconfigure each parallel environment with its SensorConfig.
+            for env_idx, cfg in enumerate(chunk):
+                self.env.reconfigure_sensors(env_idx, cfg, sensor_models)
+
+            # (b) Run rollouts for all environments simultaneously.
+            # Isaac-side should do vectorized stepping (minimize Python loops).
+            # We pass a derived RNG for chunk-level determinism.
+            chunk_seed = int(rng.integers(0, np.iinfo(np.int32).max))
+            chunk_rng = np.random.default_rng(chunk_seed)
+            metrics_all = self.env.run_rollouts(n_episodes=n_episodes, rng=chunk_rng)
+
+            if not isinstance(metrics_all, list):
+                raise TypeError("env.run_rollouts(...) must return list[EvalMetrics]")
+            if len(metrics_all) < k:
+                raise ValueError(
+                    "env.run_rollouts(...) returned fewer metrics than active envs "
+                    f"(got {len(metrics_all)}, need >= {k})."
+                )
+
+            # (c) Collect EvalMetrics for each config (only the active env slots).
+            out.extend(metrics_all[:k])
+
+        return out
 
 
 def evaluate(
