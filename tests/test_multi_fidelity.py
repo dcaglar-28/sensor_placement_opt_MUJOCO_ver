@@ -4,7 +4,6 @@ import numpy as np
 
 from sensor_opt.encoding.config import SensorConfig, SingleSensorConfig
 from sensor_opt.evaluation.pipeline import Evaluator
-from sensor_opt.inner_loop.dummy_evaluator import FastEvaluator
 from sensor_opt.inner_loop.mock_isaac_evaluator import MockIsaacEvaluator
 
 
@@ -17,9 +16,9 @@ SENSOR_MODELS = {
 def test_multi_fidelity_returns_objectives():
     cfg = SensorConfig(sensors=[SingleSensorConfig("lidar", "top", z_offset=0.3)])
     evaluator = Evaluator(
-        fast_eval=FastEvaluator(noise_std=0.05),
-        mid_eval=FastEvaluator(noise_std=0.03),
-        slow_eval=MockIsaacEvaluator(latency_sec=0.0, stochastic_std=0.01),
+        fast_eval=MockIsaacEvaluator(latency_sec=0.0, stochastic_std=0.01, baseline_noise_std=0.05),
+        mid_eval=MockIsaacEvaluator(latency_sec=0.0, stochastic_std=0.008, baseline_noise_std=0.03),
+        slow_eval=MockIsaacEvaluator(latency_sec=0.0, stochastic_std=0.01, baseline_noise_std=0.01),
         weights={"alpha": 0.4, "beta": 0.4, "gamma": 0.2},
         sensor_models=SENSOR_MODELS,
         max_cost_usd=10_000.0,

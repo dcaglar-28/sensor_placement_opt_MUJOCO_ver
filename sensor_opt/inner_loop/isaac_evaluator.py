@@ -2,7 +2,7 @@
 sensor_opt/inner_loop/isaac_evaluator.py
 
 Isaac Sim inner-loop stub. Implement Phase 1 here.
-Public interface matches dummy_evaluator.evaluate() exactly.
+Public interface matches the inner-loop `evaluate()` shape used by the repo.
 """
 
 from __future__ import annotations

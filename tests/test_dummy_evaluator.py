@@ -1,10 +1,13 @@
-"""tests/test_dummy_evaluator.py"""
+"""tests/test_dummy_evaluator.py
+
+Legacy name: this now tests the self-contained MockIsaac evaluator baseline.
+"""
 
 import numpy as np
 import pytest
 
 from sensor_opt.encoding.config import SingleSensorConfig, SensorConfig
-from sensor_opt.inner_loop.dummy_evaluator import evaluate
+from sensor_opt.inner_loop.mock_isaac_evaluator import evaluate
 from sensor_opt.loss.loss import EvalMetrics
 
 SENSOR_MODELS = {
@@ -59,7 +62,7 @@ def test_zero_noise_is_deterministic():
 
 def test_cma_converges_on_dummy(tmp_path):
     from sensor_opt.cma.outer_loop import run_outer_loop
-    from sensor_opt.inner_loop.dummy_evaluator import evaluate as dummy_eval
+    from sensor_opt.inner_loop.mock_isaac_evaluator import evaluate as dummy_eval
     from sensor_opt.logging.experiment_logger import ExperimentLogger
 
     cfg = {
@@ -69,7 +72,7 @@ def test_cma_converges_on_dummy(tmp_path):
         "sensor_models": SENSOR_MODELS,
         "cma": {"sigma0": 0.3, "population_size": 10, "max_generations": 15, "tolx": 1e-6, "tolfun": 1e-7},
         "loss": {"alpha": 0.4, "beta": 0.4, "gamma": 0.2, "max_cost_usd": 10000.0},
-        "inner_loop": {"mode": "dummy", "n_episodes": 10, "dummy": {"noise_std": 0.03}},
+        "inner_loop": {"mode": "mock_isaac", "n_episodes": 10, "mock_isaac": {"baseline_noise_std": 0.03, "latency_sec": 0.0, "stochastic_std": 0.01}},
         "logging": {"csv": True, "mlflow": False, "log_every_n_generations": 5, "results_dir": str(tmp_path)},
     }
 

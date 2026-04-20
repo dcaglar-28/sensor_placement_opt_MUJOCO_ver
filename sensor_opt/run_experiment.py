@@ -17,8 +17,7 @@ import sys
 import yaml
 
 from sensor_opt.evaluation.pipeline import Evaluator
-from sensor_opt.inner_loop.dummy_evaluator import FastEvaluator, evaluate as dummy_evaluate
-from sensor_opt.inner_loop.isaac_evaluator import IsaacSimEvaluator, evaluate as isaac_evaluate
+from sensor_opt.inner_loop.isaac_evaluator import IsaacSimEvaluator
 from sensor_opt.inner_loop.mock_isaac_evaluator import MockIsaacEvaluator
 from sensor_opt.logging.experiment_logger import ExperimentLogger
 from sensor_opt.search.factory import create_search
@@ -34,7 +33,7 @@ def main():
     parser.add_argument("--config", default="configs/default.yaml",
                         help="Path to YAML config file")
     parser.add_argument("--dummy", action="store_true",
-                        help="Use dummy evaluator (no Isaac Sim required)")
+                        help="Alias for mock Isaac evaluator (no Isaac Sim required)")
     parser.add_argument("--seed", type=int, default=None,
                         help="Random seed override")
     parser.add_argument("--no-mlflow", action="store_true",
@@ -45,7 +44,7 @@ def main():
     cfg.setdefault("search", {"type": "cma"})
 
     if args.dummy:
-        cfg["inner_loop"]["mode"] = "dummy"
+        cfg["inner_loop"]["mode"] = "mock_isaac"
 
     mode = cfg["inner_loop"]["mode"]
     seed = args.seed if args.seed is not None else cfg["experiment"].get("seed", 42)
@@ -59,33 +58,41 @@ def main():
     evaluator_obj = None
     base_evaluator = None
 
-    if mode == "dummy":
-        evaluator_fn = dummy_evaluate
-        base_evaluator = FastEvaluator(noise_std=cfg["inner_loop"].get("dummy", {}).get("noise_std", 0.05))
-        print("[Experiment] Using DUMMY evaluator (Phase 0 validation mode)")
-    elif mode == "mock_isaac":
+    if mode == "mock_isaac" or mode == "dummy":
         base_evaluator = MockIsaacEvaluator(
             latency_sec=float(cfg["inner_loop"].get("mock_isaac", {}).get("latency_sec", 0.15)),
             stochastic_std=float(cfg["inner_loop"].get("mock_isaac", {}).get("stochastic_std", 0.03)),
+            baseline_noise_std=float(cfg["inner_loop"].get("mock_isaac", {}).get("baseline_noise_std", 0.01)),
         )
-        evaluator_fn = dummy_evaluate
+        evaluator_fn = None
         print("[Experiment] Using MOCK Isaac evaluator")
     elif mode == "isaac_sim":
-        evaluator_fn = isaac_evaluate
         base_evaluator = IsaacSimEvaluator(isaac_sim_cfg=cfg["inner_loop"].get("isaac_sim", {}))
+        evaluator_fn = None
         print("[Experiment] Using Isaac Sim evaluator")
     else:
-        print(f"[Experiment] Unknown mode '{mode}'. Use 'dummy', 'mock_isaac', or 'isaac_sim'.")
+        print(f"[Experiment] Unknown mode '{mode}'. Use 'mock_isaac' or 'isaac_sim'.")
         sys.exit(1)
 
     mf_cfg = cfg.get("multi_fidelity", {})
     if mf_cfg.get("enabled", False):
         evaluator_obj = Evaluator(
-            fast_eval=FastEvaluator(noise_std=float(mf_cfg.get("fast_noise_std", 0.08))),
-            mid_eval=FastEvaluator(noise_std=float(mf_cfg.get("mid_noise_std", 0.04))),
+            # With dummy evaluator removed, we use MockIsaac with zero latency as
+            # the "fast" and "mid" stages (lower stochasticity).
+            fast_eval=MockIsaacEvaluator(
+                latency_sec=0.0,
+                stochastic_std=float(mf_cfg.get("fast_stochastic_std", 0.02)),
+                baseline_noise_std=float(mf_cfg.get("fast_baseline_noise_std", 0.08)),
+            ),
+            mid_eval=MockIsaacEvaluator(
+                latency_sec=0.0,
+                stochastic_std=float(mf_cfg.get("mid_stochastic_std", 0.015)),
+                baseline_noise_std=float(mf_cfg.get("mid_baseline_noise_std", 0.04)),
+            ),
             slow_eval=MockIsaacEvaluator(
                 latency_sec=float(mf_cfg.get("slow_latency_sec", 0.15)),
                 stochastic_std=float(mf_cfg.get("slow_stochastic_std", 0.03)),
+                baseline_noise_std=float(mf_cfg.get("slow_baseline_noise_std", 0.01)),
             ),
             weights={
                 "alpha": cfg["loss"]["alpha"],
