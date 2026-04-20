@@ -67,6 +67,20 @@ class FastEvaluator(BaseEvaluator):
             rng=rng,
         )
 
+    def run_batch(
+        self,
+        configs: list[SensorConfig],
+        sensor_models: dict,
+        n_episodes: int = 15,
+        rng: np.random.Generator | None = None,
+    ) -> list[EvalMetrics]:
+        # For now this is still a loop; keeping it explicit makes it easy to swap
+        # in a JAX-vmap implementation later without changing call sites.
+        return [
+            self.run(config=c, sensor_models=sensor_models, n_episodes=n_episodes, rng=rng)
+            for c in configs
+        ]
+
 
 def evaluate(
     config: SensorConfig,
