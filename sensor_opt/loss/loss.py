@@ -40,6 +40,8 @@ class LossResult:
     cost_usd: float
     n_active_sensors: int
     config_summary: str
+    hardware_penalty_term: float = 0.0
+    objectives: Dict[str, float] | None = None
 
 
 def compute_loss(
@@ -48,6 +50,7 @@ def compute_loss(
     sensor_models: dict,
     weights: dict,
     max_cost_usd: float = 10_000.0,
+    hardware_constraints: dict | None = None,
 ) -> LossResult:
     xp = _array_lib()
 
@@ -62,19 +65,29 @@ def compute_loss(
     cost_penalty = float(xp.clip(cost_usd / max_cost_usd, 0.0, 1.0))
     cost_term   = float(gamma * cost_penalty)
 
-    total = collision_term + blind_term + cost_term
+    hardware_penalty_term = _compute_hardware_penalty(config, sensor_models, hardware_constraints)
+    total = collision_term + blind_term + cost_term + hardware_penalty_term
 
     if not config.active_sensors():
         total = 1.0
+
+    objectives = {
+        "collision": float(_clamp(metrics.collision_rate)),
+        "blind_spot": float(_clamp(metrics.blind_spot_fraction)),
+        "cost": cost_penalty,
+        "hardware": float(_clamp(hardware_penalty_term)),
+    }
 
     return LossResult(
         total=_clamp(total),
         collision_term=collision_term,
         blind_term=blind_term,
         cost_term=cost_term,
+        hardware_penalty_term=hardware_penalty_term,
         cost_usd=cost_usd,
         n_active_sensors=len(config.active_sensors()),
         config_summary=config.summary(),
+        objectives=objectives,
     )
 
 
@@ -106,3 +119,39 @@ def _compute_effective_cost(config: SensorConfig, sensor_models: dict) -> float:
         type_instance[sensor.sensor_type] = idx + 1
 
     return total
+
+
+def _compute_hardware_penalty(
+    config: SensorConfig,
+    sensor_models: dict,
+    hardware_constraints: dict | None,
+) -> float:
+    if not hardware_constraints:
+        return 0.0
+
+    active = config.active_sensors()
+    if not active:
+        return 0.0
+
+    total_compute = 0.0
+    total_memory = 0.0
+    total_latency = 0.0
+    for sensor in active:
+        model = sensor_models.get(sensor.sensor_type, {})
+        total_compute += float(model.get("compute_tops", 2.0))
+        total_memory += float(model.get("memory_gb", 0.3))
+        total_latency += float(model.get("latency_ms", 10.0))
+
+    penalty = 0.0
+    compute_limit = float(hardware_constraints.get("compute_limit_tops", 1e9))
+    memory_limit = float(hardware_constraints.get("memory_limit_gb", 1e9))
+    latency_budget = float(hardware_constraints.get("latency_budget_ms", 1e9))
+
+    if total_compute > compute_limit:
+        penalty += (total_compute - compute_limit) / max(compute_limit, 1e-6)
+    if total_memory > memory_limit:
+        penalty += (total_memory - memory_limit) / max(memory_limit, 1e-6)
+    if total_latency > latency_budget:
+        penalty += 2.0 * (total_latency - latency_budget) / max(latency_budget, 1e-6)
+
+    return float(_clamp(penalty))

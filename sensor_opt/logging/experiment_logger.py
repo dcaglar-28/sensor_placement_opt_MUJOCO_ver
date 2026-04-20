@@ -35,6 +35,8 @@ class GenerationRecord:
     best_config_summary: str
     population_size: int
     cma_sigma: float
+    mean_eval_time_sec: float = 0.0
+    dominant_fidelity: str = "single"
 
 
 class ExperimentLogger:
@@ -43,7 +45,7 @@ class ExperimentLogger:
         "best_loss", "mean_loss", "std_loss",
         "best_collision_term", "best_blind_term", "best_cost_term",
         "best_cost_usd", "best_n_active", "best_config_summary",
-        "population_size", "cma_sigma",
+        "population_size", "cma_sigma", "mean_eval_time_sec", "dominant_fidelity",
     ]
 
     def __init__(
@@ -85,6 +87,8 @@ class ExperimentLogger:
         losses: List[float],
         best_result: LossResult,
         cma_sigma: float,
+        mean_eval_time_sec: float = 0.0,
+        dominant_fidelity: str = "single",
     ) -> None:
         arr = np.array(losses)
         record = GenerationRecord(
@@ -103,6 +107,8 @@ class ExperimentLogger:
             best_config_summary=best_result.config_summary,
             population_size=len(losses),
             cma_sigma=round(float(cma_sigma), 6),
+            mean_eval_time_sec=round(float(mean_eval_time_sec), 6),
+            dominant_fidelity=dominant_fidelity,
         )
         self.records.append(record)
         self._csv_writer.writerow(asdict(record))
@@ -121,8 +127,10 @@ class ExperimentLogger:
                 "collision": best_result.collision_term,
                 "blind_spot": best_result.blind_term,
                 "cost": best_result.cost_term,
+                "hardware_penalty": best_result.hardware_penalty_term,
                 "cost_usd": best_result.cost_usd,
             },
+            "best_objectives": best_result.objectives or {},
         }
         with open(self.run_dir / "final_result.json", "w") as f:
             json.dump(summary, f, indent=2)

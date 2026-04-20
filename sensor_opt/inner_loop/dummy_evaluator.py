@@ -16,6 +16,7 @@ from __future__ import annotations
 import numpy as np
 
 from sensor_opt.encoding.config import SensorConfig
+from sensor_opt.evaluation.base import BaseEvaluator
 from sensor_opt.loss.loss import EvalMetrics
 
 SLOT_COVERAGE_SCORE = {
@@ -42,12 +43,54 @@ TYPE_BLIND_WEIGHT = {
 }
 
 
+class FastEvaluator(BaseEvaluator):
+    """
+    Fast analytical evaluator (Phase 0 / low-fidelity).
+    Reuses the original dummy evaluation logic.
+    """
+
+    def __init__(self, noise_std: float = 0.05):
+        self.noise_std = noise_std
+
+    def run(
+        self,
+        config: SensorConfig,
+        sensor_models: dict,
+        n_episodes: int = 15,
+        rng: np.random.Generator | None = None,
+    ) -> EvalMetrics:
+        return _evaluate_core(
+            config=config,
+            sensor_models=sensor_models,
+            n_episodes=n_episodes,
+            noise_std=self.noise_std,
+            rng=rng,
+        )
+
+
 def evaluate(
     config: SensorConfig,
     sensor_models: dict,
     n_episodes: int = 15,
     noise_std: float = 0.05,
     rng: np.random.Generator | None = None,
+) -> EvalMetrics:
+    """Backwards-compatible function API used by existing tests/callers."""
+    return _evaluate_core(
+        config=config,
+        sensor_models=sensor_models,
+        n_episodes=n_episodes,
+        noise_std=noise_std,
+        rng=rng,
+    )
+
+
+def _evaluate_core(
+    config: SensorConfig,
+    sensor_models: dict,
+    n_episodes: int,
+    noise_std: float,
+    rng: np.random.Generator | None,
 ) -> EvalMetrics:
     if rng is None:
         rng = np.random.default_rng()

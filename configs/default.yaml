@@ -2,6 +2,24 @@ experiment:
   name: "default_run"
   seed: 42
 
+search:
+  type: cma
+
+nsga2:
+  population_size: 32
+  generations: 20
+
+bayesian:
+  init_samples: 20
+  iterations: 50
+  acq_candidates: 64
+  kappa: 1.25
+
+hybrid:
+  warmup_iters: 10
+  surrogate_top_k: 5
+  kappa: 1.2
+
 sensor_budget:
   lidar:
     max_count: 2
@@ -21,6 +39,9 @@ sensor_models:
     points_per_second: 300000
     mass_kg: 0.83
     blind_spot_reduction_factor: 0.85
+    compute_tops: 8.0
+    memory_gb: 1.2
+    latency_ms: 20.0
 
   camera:
     model_name: "Intel RealSense D435i"
@@ -31,6 +52,9 @@ sensor_models:
     depth_accuracy_pct: 2.0
     mass_kg: 0.07
     blind_spot_reduction_factor: 0.45
+    compute_tops: 2.0
+    memory_gb: 0.4
+    latency_ms: 8.0
 
   radar:
     model_name: "TI AWR1843BOOST"
@@ -40,6 +64,9 @@ sensor_models:
     vertical_fov_deg: 30.0
     mass_kg: 0.05
     blind_spot_reduction_factor: 0.60
+    compute_tops: 1.0
+    memory_gb: 0.2
+    latency_ms: 6.0
 
 mounting_slots:
   - front
@@ -66,11 +93,30 @@ loss:
   max_cost_usd: 10000.0
 
 inner_loop:
-  mode: "dummy"
+  mode: "dummy"  # dummy | mock_isaac | isaac_sim
   n_episodes: 15
   max_steps_per_episode: 500
   dummy:
     noise_std: 0.05
+  mock_isaac:
+    latency_sec: 0.15
+    stochastic_std: 0.03
+  isaac_sim: {}
+
+hardware:
+  name: "jetson_orin_like"
+  compute_limit_tops: 20.0
+  memory_limit_gb: 4.0
+  latency_budget_ms: 60.0
+
+multi_fidelity:
+  enabled: true
+  fast_noise_std: 0.08
+  mid_noise_std: 0.04
+  slow_latency_sec: 0.15
+  slow_stochastic_std: 0.03
+  fast_collision_threshold: 0.95
+  promising_collision_threshold: 0.35
 
 logging:
   csv: true
