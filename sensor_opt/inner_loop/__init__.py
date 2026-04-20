@@ -1,5 +1,4 @@
-from .dummy_evaluator import evaluate as dummy_evaluate
 from .isaac_evaluator import evaluate as isaac_evaluate
-from .mock_isaac_evaluator import MockIsaacEvaluator
+from .mock_isaac_evaluator import MockIsaacEvaluator, evaluate as mock_isaac_evaluate
 
-__all__ = ["dummy_evaluate", "isaac_evaluate", "MockIsaacEvaluator"]
+__all__ = ["isaac_evaluate", "mock_isaac_evaluate", "MockIsaacEvaluator"]
