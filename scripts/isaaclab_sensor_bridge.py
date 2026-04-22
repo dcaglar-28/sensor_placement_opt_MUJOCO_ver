@@ -376,6 +376,12 @@ class _BridgeRequestHandler(BaseHTTPRequestHandler):
         self._state = state
         super().__init__(*args, **kwargs)
 
+    def do_GET(self) -> None:  # noqa: N802
+        # Minimal readiness endpoint for Colab/CI polling.
+        if self.path in ("/health", "/health/"):
+            return _json_response(self, 200, {"ok": True, "service": "isaaclab_sensor_bridge"})
+        return _json_response(self, 404, {"error": f"unknown path: {self.path}"})
+
     def do_POST(self) -> None:  # noqa: N802
         try:
             body = _json_loads_body(self)

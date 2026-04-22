@@ -41,6 +41,11 @@ class CMASearch(BaseSearch):
         evaluator_fn = self.evaluator.get("evaluator_fn")
         evaluator_obj = self.evaluator.get("evaluator")
         base_evaluator = self.evaluator.get("base_evaluator")
+        if evaluator_fn is None and evaluator_obj is None and base_evaluator is None:
+            raise ValueError(
+                "CMASearch requires at least one of: evaluator_fn, evaluator (multi-fidelity), "
+                "or base_evaluator (Isaac/mock structured evaluator)."
+            )
 
         return run_cma_optimization(
             config=self.config,
