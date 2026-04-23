@@ -1,5 +1,10 @@
 # Isaac Lab + obstacle-corridor style evaluation (used with `scripts/isaaclab_sensor_bridge.py --bridge-mode obstacle`).
 # Notes:
+# - On Colab, set `BRIDGE_MODE=obstacle` for the bridge and point the optimizer at this file either explicitly
+#   (`CONFIG_PATH=configs/obstacle_isaaclab.yaml`) or via the notebook default that maps `BRIDGE_MODE` → config.
+# - The Colab notebook `notebooks/sensor_opt_isaaclab_colab.ipynb` may override `inner_loop.n_episodes` and
+#   `max_steps_per_episode` in-memory for quick smoke tests; keep them aligned with the bridge’s `--max-steps`
+#   / `--sim-dt` when you run full experiments.
 # - The bridge spawns 3-5 static cuboids per reset and reports p95(t_det) + contact-based collision rate.
 # - The optimization objective (when `loss.mode: obstacle_latency`) is:
 #     Loss = alpha * p95(t_det) + beta * collision_rate
@@ -26,6 +31,10 @@ sensor_budget:
 sensor_models:
   lidar:
     isaac:
+      # USD path to the sensor Xform (required for the bridge to move the prim). Use `{env_idx}` in vectorized envs, e.g.:
+      #   prim_path: "/World/envs/env_{env_idx}/Robot/your_lidar"
+      # Multiple lidars: use `prim_paths: [".../lidar0", ".../lidar1"]` (order matches active lidars) or
+      # `mount_prim_paths: { front: "...", top: "..." }` matching `SingleSensorConfig.slot`.
       prim_path: ""
     model_name: "Velodyne VLP-16"
     cost_usd: 4000
@@ -41,6 +50,7 @@ sensor_models:
     latency_ms: 20.0
   camera:
     isaac:
+      # Same as lidar, or set env `ISAAC_CAMERA_PRIM` in Colab if you prefer not to commit paths.
       prim_path: ""
     model_name: "Intel RealSense D435i"
     cost_usd: 200

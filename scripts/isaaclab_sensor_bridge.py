@@ -8,7 +8,14 @@ Implements the env contract used by `sensor_opt.inner_loop.isaac_evaluator.Isaac
   - run_rollouts(n_episodes, rng) -> list[EvalMetrics]
 
 This script is meant to be executed with the **Isaac Sim / Isaac Lab python**
-(e.g. the Colab setup that installs Isaac Lab under `/content/IsaacLab`).
+(e.g. the Colab setup that installs Isaac Lab under `/usr/local` on common Colab images).
+
+**Google Colab note:** the Jupyter kernel’s `python` may not be the same interpreter as
+Isaac/Kit. Launch the bridge with the Isaac install’s Python (often `ISAAC_PYTHON=/usr/local/bin/python`)
+in a background `subprocess`, then poll `GET /health` from the notebook. If the HTTP server fails with
+`OSError: [Errno 98] Address already in use`, a previous bridge is still bound — stop it (`pkill` / free
+the port) before relaunch. Optional env tuning (EULA, Vulkan, Carb) is left to the user’s Colab
+notebook. See the repo `README.md` “Google Colab + Isaac Lab” section.
 
 It exposes a tiny HTTP server with POST endpoints:
   - /reconfigure_sensors
@@ -29,8 +36,11 @@ NOTE:
     (If you need production-grade world coupling, also register obstacles in your task `InteractiveSceneCfg`
     in the Isaac Lab project so resets/domain randomization stay consistent.)
 
-  For real assets, you should still provide USD prim paths in `sensor_models.<type>.isaac.prim_path`
-  (and optional `{env_idx}` formatting) so `_apply_sensor_config` can move sensors.
+  For real assets, provide USD prim paths for each moved sensor: `sensor_models.<type>.isaac.prim_path`
+  (optional `{env_idx}`), or `isaac.mount_prim_paths` keyed by `SingleSensorConfig.slot`, or
+  `isaac.prim_paths` (one string per active sensor of that type), or env
+  `ISAAC_LIDAR_PRIM` / `ISAAC_CAMERA_PRIM` / `ISAAC_RADAR_PRIM`. Configured poses are re-applied
+  after `env.reset()` as well as on `/reconfigure_sensors`, because reset often reloads default transforms.
 """
 
 from __future__ import annotations
@@ -39,6 +49,7 @@ import argparse
 import inspect
 import json
 import math
+import os
 import sys
 import threading
 from dataclasses import asdict
@@ -58,6 +69,62 @@ def _load_eval_metrics_type(repo_root: str):
     from sensor_opt.loss.loss import EvalMetrics  # noqa: WPS433 (runtime import on purpose)
 
     return EvalMetrics
+
+
+def _euler_rpy_deg_to_quat_wxyz(roll_deg: float, pitch_deg: float, yaw_deg: float) -> tuple[float, float, float, float]:
+    """
+    RPY in degrees, intrinsic XYZ, quaternion (w, x, y, z) for `omni.isaac.core.prims.XFormPrim`.
+    """
+    r = math.radians(float(roll_deg))
+    p = math.radians(float(pitch_deg))
+    y = math.radians(float(yaw_deg))
+    cr, sr = math.cos(r * 0.5), math.sin(r * 0.5)
+    cp, sp = math.cos(p * 0.5), math.sin(p * 0.5)
+    cy, sy = math.cos(y * 0.5), math.sin(y * 0.5)
+    w = cr * cp * cy - sr * sp * sy
+    x = sr * cp * cy + cr * sp * sy
+    y_ = cr * sp * cy - sr * cp * sy
+    z = cr * cp * sy + sr * sp * cy
+    return (w, x, y_, z)
+
+
+def _format_prim_path_tmpl(tmpl: str, *, env_idx: int) -> str:
+    s = str(tmpl)
+    try:
+        return s.format(env_idx=env_idx, env=env_idx)
+    except (KeyError, ValueError, IndexError):
+        return s
+
+
+def _resolve_isaac_prim_path(
+    meta: dict,
+    sensor_type: str,
+    slot: str,
+    type_index: int,
+    env_idx: int,
+) -> Optional[str]:
+    """
+    Pick a single USD path for a sensor, in order:
+    - meta['mount_prim_paths'][slot] (string or {env_idx} template)
+    - meta['prim_paths'][type_index] for multiple prims of the same type
+    - meta['prim_path']
+    - env ISAAC_<SENSOR_TYPE>_PRIM  (e.g. ISAAC_LIDAR_PRIM), optional {env_idx}
+    """
+    if not isinstance(meta, dict):
+        return None
+    mpp = meta.get("mount_prim_paths")
+    if isinstance(mpp, dict) and str(slot) in mpp and mpp.get(str(slot)):
+        return _format_prim_path_tmpl(str(mpp[str(slot)]), env_idx=env_idx)
+    pl = meta.get("prim_paths")
+    if isinstance(pl, list) and 0 <= int(type_index) < len(pl) and pl[int(type_index)]:
+        return _format_prim_path_tmpl(str(pl[int(type_index)]), env_idx=env_idx)
+    pp = meta.get("prim_path")
+    if pp:
+        return _format_prim_path_tmpl(str(pp), env_idx=env_idx)
+    key = f"ISAAC_{str(sensor_type).upper()}_PRIM"
+    if os.environ.get(key):
+        return _format_prim_path_tmpl(str(os.environ[key]), env_idx=env_idx)
+    return None
 
 
 def _p95(x: list[float]) -> float:
@@ -276,13 +343,14 @@ class _BridgeState:
         self._configs: list[SensorConfig] = [SensorConfig(sensors=[]) for _ in range(self.num_envs)]
         self._models: list[dict] = [{} for _ in range(self.num_envs)]
         self._warned_vec_reset: bool = False
+        self._warned_prim: set[str] = set()
 
     def reconfigure_sensors(self, env_idx: int, config: dict, sensor_models: dict) -> None:
         if env_idx < 0 or env_idx >= self.num_envs:
             raise IndexError(f"env_idx out of range: {env_idx}")
         self._configs[env_idx] = _sensor_config_from_dict(config, self.SensorConfig, self.SingleSensorConfig)
         self._models[env_idx] = dict(sensor_models or {})
-        # Hook point for the user: apply to Isaac scene / sensor prims.
+        # Apply to USD sensor prims (and again after each `env.reset()` during rollouts).
         self._apply_sensor_config(env_idx=env_idx, config=self._configs[env_idx], sensor_models=self._models[env_idx])
 
     def _reset_for_row(self, env_idx: int, seed: int) -> Any:
@@ -348,44 +416,85 @@ class _BridgeState:
 
     # --- user-editable region -------------------------------------------------
 
+    def _reapply_sensor_config(self, env_idx: int) -> None:
+        """Re-apply the last /reconfigure_sensors config (needed after `env.reset()` reverts prims)."""
+        self._apply_sensor_config(
+            env_idx=env_idx,
+            config=self._configs[env_idx],
+            sensor_models=self._models[env_idx],
+        )
+
     def _apply_sensor_config(self, env_idx: int, config, sensor_models: dict) -> None:
         """
-        Best-effort USD `Xform` updates if prim paths are provided in YAML:
-          sensor_models:
-            lidar:
-              isaac: { prim_path: "/World/envs/env_{env_idx}/.../Lidar" }
+        Move sensor `Xform` prims in USD from `SingleSensorConfig` (offsets + pitch/yaw).
+
+        Paths (first match):
+          - `sensor_models.<type>.isaac.mount_prim_paths` (per mounting slot)
+          - `...isaac.prim_paths` (one entry per *active* sensor of that type, 0-based)
+          - `...isaac.prim_path`  (use `{env_idx}` in the string for vectorized envs)
+          - env `ISAAC_LIDAR_PRIM` / `ISAAC_CAMERA_PRIM` / `ISAAC_RADAR_PRIM` if YAML is empty
         """
         _add_repo_to_syspath(self.repo_root)
 
+        try:
+            from omni.isaac.core.prims import XFormPrim  # type: ignore
+        except Exception as e:
+            if not self._warned_no_usd:
+                print(f"[isaaclab_sensor_bridge] USD API not available; skipping prim moves. ({e})")
+                self._warned_no_usd = True
+            return
+
+        per_type: dict[str, int] = {}
         for s in config.active_sensors():
+            t = s.sensor_type
+            idx = int(per_type.get(t, 0))
+            per_type[t] = idx + 1
+
             model = (sensor_models or {}).get(s.sensor_type, {}) or {}
             meta = (model.get("isaac") or {}) if isinstance(model, dict) else {}
-            if not isinstance(meta, dict):
+            prim_path_f = _resolve_isaac_prim_path(
+                meta if isinstance(meta, dict) else {},
+                str(s.sensor_type),
+                str(s.slot),
+                idx,
+                int(env_idx),
+            )
+            if not prim_path_f:
+                k = f"missing_path:{s.sensor_type}@{s.slot}#{idx}"
+                if k not in self._warned_prim:
+                    print(
+                        "[isaaclab_sensor_bridge] No prim path for "
+                        f"sensor type={s.sensor_type!r} slot={s.slot!r} i={idx} (env {env_idx}). "
+                        f"Set `isaac.prim_path` (or `mount_prim_paths` / `prim_paths`, or env ISAAC_"
+                        f"{str(s.sensor_type).upper()}_PRIM) so the bridge can move the sensor; "
+                        "metrics will not vary between candidates if prims are not moved."
+                    )
+                    self._warned_prim.add(k)
                 continue
-            prim_path = meta.get("prim_path", None)
-            if not prim_path:
-                continue
-            try:
-                prim_path_f = str(prim_path).format(env_idx=env_idx)
-            except Exception:
-                prim_path_f = str(prim_path)
+
+            wxyz = _euler_rpy_deg_to_quat_wxyz(0.0, float(s.pitch_deg), float(s.yaw_deg))
+            q = np.asarray(wxyz, dtype=np.float64)
 
             try:
-                from omni.isaac.core.prims import XFormPrim  # type: ignore
-            except Exception as e:
-                if not self._warned_no_usd:
-                    print(f"[isaaclab_sensor_bridge] USD API not available; skipping prim moves. ({e})")
-                    self._warned_no_usd = True
-                return
-
-            try:
-                xf = XFormPrim(prim_path_f)
-                # Translation offsets in meters; rotation hooks can be added if you expose euler in USD
-                xf.set_local_pose(translation=(float(s.x_offset), float(s.y_offset), float(s.z_offset)))
-            except Exception as e:
-                if not self._warned_no_usd:
-                    print(f"[isaaclab_sensor_bridge] Failed to set pose for {prim_path_f!r}: {e}")
-                    self._warned_no_usd = True
+                xf = XFormPrim(str(prim_path_f))
+                xf.set_local_pose(
+                    translation=(float(s.x_offset), float(s.y_offset), float(s.z_offset)),
+                    orientation=q,
+                )
+            except Exception as e0:
+                # Some Isaac versions differ on orientation dtype/shape, or are translation-only.
+                try:
+                    XFormPrim(str(prim_path_f)).set_local_pose(
+                        translation=(float(s.x_offset), float(s.y_offset), float(s.z_offset))
+                    )
+                except Exception as e2:
+                    k = f"err:{prim_path_f}"
+                    if k not in self._warned_prim:
+                        print(
+                            f"[isaaclab_sensor_bridge] set_local_pose failed for {prim_path_f!r} "
+                            f"(with orientation: {e0}; translation-only: {e2})"
+                        )
+                        self._warned_prim.add(k)
         return
 
     def _rollout_one_env(self, env_idx: int, n_episodes: int, seed: int):
@@ -422,6 +531,8 @@ class _BridgeState:
                 obs = reset_out[0]
             else:
                 obs = reset_out
+            # `reset()` can restore default USD sensor poses; re-apply the candidate config.
+            self._reapply_sensor_config(env_idx)
             t = 0
             ep_reward = 0.0
             ep_blinds: list[float] = []
@@ -555,6 +666,7 @@ class _BridgeState:
                 obs = reset_out[0]
             else:
                 obs = reset_out
+            self._reapply_sensor_config(env_idx)
             # Randomize 3-5 obstacles *after* reset (scene stable), per project spec
             n_obst = int(erng.integers(3, 6))
             _ = _ensure_obstacles_for_env(
