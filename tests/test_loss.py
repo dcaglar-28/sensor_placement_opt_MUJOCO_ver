@@ -86,3 +86,29 @@ def test_gamma_zero_cost_ignored():
     r = compute_loss(make_metrics(), make_config("lidar"),
                      SENSOR_MODELS, {"alpha": 0.5, "beta": 0.5, "gamma": 0.0}, MAX_COST)
     assert r.cost_term == 0.0
+
+
+def test_obstacle_latency_mode_matches_expected_weighting():
+    w = {"alpha": 1.0, "beta": 100.0, "gamma": 0.0, "t_det_max_s": 10.0}
+    m = EvalMetrics(
+        collision_rate=0.1,
+        blind_spot_fraction=0.0,
+        mean_goal_success=0.0,
+        n_episodes=10,
+        t_det_s=0.0,
+        t_det_s_p95=5.0,
+        episode_time_s=10.0,
+        safety_success=0.0,
+    )
+    r = compute_loss(
+        m,
+        make_config("lidar"),
+        SENSOR_MODELS,
+        w,
+        MAX_COST,
+        hardware_constraints={},
+        loss_mode="obstacle_latency",
+    )
+    assert abs(r.blind_term - 0.5) < 1e-6  # alpha * (5/10)
+    assert abs(r.collision_term - 10.0) < 1e-6  # beta * 0.1
+    assert abs(r.total - 10.5) < 1e-6

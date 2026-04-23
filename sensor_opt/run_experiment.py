@@ -20,6 +20,7 @@ from sensor_opt.evaluation.pipeline import Evaluator
 from sensor_opt.inner_loop.isaac_evaluator import IsaacSimEvaluator
 from sensor_opt.inner_loop.mock_isaac_evaluator import MockIsaacEvaluator
 from sensor_opt.logging.experiment_logger import ExperimentLogger
+from sensor_opt.loss.loss import loss_weight_dict
 from sensor_opt.search.factory import create_search
 
 
@@ -94,12 +95,9 @@ def main():
                 stochastic_std=float(mf_cfg.get("slow_stochastic_std", 0.03)),
                 baseline_noise_std=float(mf_cfg.get("slow_baseline_noise_std", 0.01)),
             ),
-            weights={
-                "alpha": cfg["loss"]["alpha"],
-                "beta": cfg["loss"]["beta"],
-                "gamma": cfg["loss"]["gamma"],
-            },
+            weights=loss_weight_dict(cfg["loss"]),
             sensor_models=cfg["sensor_models"],
+            loss_mode=str(cfg["loss"].get("mode", "default")),
             max_cost_usd=float(cfg["loss"].get("max_cost_usd", 10_000.0)),
             fast_collision_threshold=float(mf_cfg.get("fast_collision_threshold", 0.95)),
             promising_collision_threshold=float(mf_cfg.get("promising_collision_threshold", 0.35)),

@@ -1,24 +1,19 @@
+# Isaac Lab + obstacle-corridor style evaluation (used with `scripts/isaaclab_sensor_bridge.py --bridge-mode obstacle`).
+# Notes:
+# - The bridge spawns 3-5 static cuboids per reset and reports p95(t_det) + contact-based collision rate.
+# - The optimization objective (when `loss.mode: obstacle_latency`) is:
+#     Loss = alpha * p95(t_det) + beta * collision_rate
+#   with p95(t_det) normalized by `t_det_max_s` to keep terms comparable.
+#
+# For a full Isaac Lab task, you may still need to add sensors/obstacles in your `InteractiveSceneCfg`
+# in the task repo; this repo provides a *bridge-side* best-effort USD spawner for rapid prototyping.
+
 experiment:
-  name: "default_run"
+  name: "obstacle_isaaclab_run"
   seed: 42
 
 search:
   type: cma
-
-nsga2:
-  population_size: 32
-  generations: 20
-
-bayesian:
-  init_samples: 20
-  iterations: 50
-  acq_candidates: 64
-  kappa: 1.25
-
-hybrid:
-  warmup_iters: 10
-  surrogate_top_k: 5
-  kappa: 1.2
 
 sensor_budget:
   lidar:
@@ -30,8 +25,6 @@ sensor_budget:
 
 sensor_models:
   lidar:
-    # Optional: used by `scripts/isaaclab_sensor_bridge.py` to move sensor prims in USD.
-    # Set `prim_path` in your actual Isaac stage (often includes `{env_idx}` for cloned envs).
     isaac:
       prim_path: ""
     model_name: "Velodyne VLP-16"
@@ -46,7 +39,6 @@ sensor_models:
     compute_tops: 8.0
     memory_gb: 1.2
     latency_ms: 20.0
-
   camera:
     isaac:
       prim_path: ""
@@ -61,7 +53,6 @@ sensor_models:
     compute_tops: 2.0
     memory_gb: 0.4
     latency_ms: 8.0
-
   radar:
     model_name: "TI AWR1843BOOST"
     cost_usd: 650
@@ -90,40 +81,33 @@ cma:
   population_size: 20
   max_generations: 100
   tolx: 1e-4
-  tolfun: 1e-5
+  tofun: 1e-5
 
 loss:
-  mode: default
-  alpha: 0.4
-  beta: 0.4
-  gamma: 0.2
+  mode: obstacle_latency
+  # Match the user's requested form with normalized p95 term:
+  #   Loss = 1.0 * (p95(t_det) / t_det_max_s) + 100.0 * collision_rate
+  alpha: 1.0
+  beta: 100.0
+  gamma: 0.0
   max_cost_usd: 10000.0
+  # If `max_steps=500` and `sim dt≈0.02` (bridge default), episode horizon is ~10s
+  t_det_max_s: 10.0
 
 inner_loop:
-  mode: "dummy"  # dummy | mock_isaac | isaac_sim
-  n_episodes: 15
+  mode: "isaac_sim" # bridge-backed IsaacSimEvaluator
+  n_episodes: 20
   max_steps_per_episode: 500
-  dummy:
-    noise_std: 0.05
-  mock_isaac:
-    latency_sec: 0.15
-    stochastic_std: 0.03
   isaac_sim: {}
 
 hardware:
-  name: "jetson_orin_like"
-  compute_limit_tops: 20.0
-  memory_limit_gb: 4.0
-  latency_budget_ms: 60.0
+  name: "not_used_in_obstacle_latency"
+  compute_limit_tops: 1e9
+  memory_limit_gb: 1e9
+  latency_budget_ms: 1e9
 
 multi_fidelity:
-  enabled: true
-  fast_noise_std: 0.08
-  mid_noise_std: 0.04
-  slow_latency_sec: 0.15
-  slow_stochastic_std: 0.03
-  fast_collision_threshold: 0.95
-  promising_collision_threshold: 0.35
+  enabled: false
 
 logging:
   csv: true

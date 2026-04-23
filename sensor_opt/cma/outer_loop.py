@@ -27,7 +27,7 @@ from sensor_opt.encoding.config import (
 from sensor_opt.evaluation.base import BaseEvaluator
 from sensor_opt.evaluation.pipeline import Evaluator
 from sensor_opt.evaluation.results import EvaluationResult
-from sensor_opt.loss.loss import EvalMetrics, LossResult, compute_loss
+from sensor_opt.loss.loss import EvalMetrics, LossResult, compute_loss, loss_weight_dict
 from sensor_opt.logging.experiment_logger import ExperimentLogger
 
 
@@ -59,6 +59,7 @@ def run_outer_loop(
     sensor_models  = cfg["sensor_models"]
     cma_cfg        = cfg["cma"]
     loss_cfg       = cfg["loss"]
+    loss_mode      = str(loss_cfg.get("mode", "default"))
     inner_cfg      = cfg["inner_loop"]
 
     x0  = make_initial_vector(sensor_budget, mounting_slots)
@@ -114,13 +115,10 @@ def run_outer_loop(
                         metrics=metrics,
                         config=config,
                         sensor_models=sensor_models,
-                        weights={
-                            "alpha": loss_cfg["alpha"],
-                            "beta": loss_cfg["beta"],
-                            "gamma": loss_cfg["gamma"],
-                        },
+                        weights=loss_weight_dict(loss_cfg),
                         max_cost_usd=loss_cfg.get("max_cost_usd", 10_000.0),
                         hardware_constraints=cfg.get("hardware", {}),
+                        loss_mode=loss_mode,
                     )
                     losses.append(lr.total)
                     loss_results.append(lr)
@@ -167,13 +165,10 @@ def run_outer_loop(
                         metrics=fallback_metrics,
                         config=config,
                         sensor_models=sensor_models,
-                        weights={
-                            "alpha": loss_cfg["alpha"],
-                            "beta":  loss_cfg["beta"],
-                            "gamma": loss_cfg["gamma"],
-                        },
+                        weights=loss_weight_dict(loss_cfg),
                         max_cost_usd=loss_cfg.get("max_cost_usd", 10_000.0),
                         hardware_constraints=cfg.get("hardware", {}),
+                        loss_mode=loss_mode,
                     )
                     eval_result = EvaluationResult(
                         metrics=fallback_metrics,
@@ -310,13 +305,10 @@ def _evaluate_candidate(
         metrics=metrics,
         config=config,
         sensor_models=sensor_models,
-        weights={
-            "alpha": loss_cfg["alpha"],
-            "beta":  loss_cfg["beta"],
-            "gamma": loss_cfg["gamma"],
-        },
+        weights=loss_weight_dict(loss_cfg),
         max_cost_usd=loss_cfg.get("max_cost_usd", 10_000.0),
         hardware_constraints=cfg.get("hardware", {}),
+        loss_mode=str(loss_cfg.get("mode", "default")),
     )
     return EvaluationResult(
         metrics=metrics,

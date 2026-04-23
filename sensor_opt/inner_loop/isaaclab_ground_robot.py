@@ -281,3 +281,187 @@ def estimate_success_from_info(info: Any, env_idx: int) -> Optional[float]:
             if a is not None and np.size(a) == 1:
                 return float(max(0.0, min(1.0, float(a.reshape(-1)[0]))))
     return None
+
+
+@dataclass(frozen=True)
+class ForwardRangeConfig:
+    """
+    Parameters for extracting a *forward-facing* min range (meters) from generic observations.
+
+    Convention: robot forward is +X in the point cloud. For depth images, we use the
+    camera center columns as a proxy for "forward" and gate by the camera HFOV.
+    """
+    # Forward cone in the x-y plane around +X: |atan2(y,x)| <= half_fov_rad
+    half_fov_rad: float = math.radians(35.0)  # ~70° total
+    max_range: float = 200.0
+
+
+def min_forward_range_from_obs(
+    obs: Any,
+    *,
+    env_idx: int,
+    sensor_models: dict,
+    cfg: ForwardRangeConfig | None = None,
+) -> Optional[float]:
+    """
+    Minimum distance to *something* in the forward sector, based on best-effort lidar/points/depth.
+    """
+    cfg = cfg or ForwardRangeConfig()
+    if obs is None:
+        return None
+
+    o = _row(obs, env_idx)
+    if o is None:
+        return None
+
+    cand: list[float] = []
+    hfov_cam = float((sensor_models or {}).get("camera", {}).get("horizontal_fov_deg", 87.0))
+    half = float(hfov_cam) * 0.5
+    forward_deg = math.degrees(float(cfg.half_fov_rad))
+
+    # 1) Depth: middle rows, only columns that fall inside [−forward_deg, +forward_deg] wrt image center
+    dimg: Optional[np.ndarray] = None
+    if isinstance(o, dict):
+        for k, v in o.items():
+            kl = str(k).lower()
+            if any(s in kl for s in ("depth", "distance", "z_buf", "zbuf")) and dimg is None:
+                a = _to_numpy(v)
+                if a is not None and np.asarray(a).size:
+                    dimg = np.asarray(a)
+    if dimg is not None:
+        d = dimg
+        while d.ndim > 2 and d.shape[0] == 1:
+            d = d[0]
+        if d.ndim == 2:
+            h, w = d.shape
+            h0, h1 = int(0.25 * h), int(0.75 * h)
+            band = d[h0:h1, :]
+            for col in range(w):
+                t = (col + 0.5) / max(w, 1)
+                ang_deg = (t - 0.5) * float(hfov_cam)  # [-HFOV/2, +HFOV/2] relative to camera
+                if abs(ang_deg) > min(half, forward_deg) + 1e-6:
+                    continue
+                col_vals = band[:, col]
+                col_vals = col_vals[np.isfinite(col_vals)]
+                if col_vals.size == 0:
+                    continue
+                v = float(np.min(col_vals))
+                if v > 1e-3 and v < float(cfg.max_range):
+                    cand.append(v)
+
+    # 2) 3D points: forward cone in x-y, take planar range
+    if isinstance(o, dict):
+        for k, v in o.items():
+            kl = str(k).lower()
+            a = _to_numpy(v)
+            if a is None or a.size == 0:
+                continue
+            a = np.asarray(a, dtype=np.float64)
+            if not any(s in kl for s in ("lidar", "point", "pc", "cloud", "range", "returns")):
+                continue
+            if a.ndim != 2 or a.shape[1] < 3:
+                if a.ndim == 2 and a.shape[0] == 3 and a.shape[1] >= 3:
+                    a = a.T
+            if a.ndim != 2 or a.shape[1] < 3 or a.shape[0] < 1:
+                continue
+            p = a[:, :3]
+            n = np.linalg.norm(p, axis=1)
+            p = p[(n > 1e-2) & (n < float(cfg.max_range))]
+            if p.size == 0:
+                continue
+            x = p[:, 0]
+            y = p[:, 1]
+            azi = np.arctan2(y, x)
+            m = (x > 1e-3) & (np.abs(azi) <= float(cfg.half_fov_rad))
+            if not bool(np.any(m)):
+                continue
+            d2 = np.sqrt(np.maximum(x[m] * x[m] + y[m] * y[m], 0.0))
+            d2 = d2[np.isfinite(d2)]
+            if d2.size:
+                cand.append(float(np.min(d2)))
+
+    if not cand:
+        return None
+    return float(np.min(np.asarray(cand, dtype=np.float64)))
+
+
+def min_range_any_from_obs(
+    obs: Any,
+    *,
+    env_idx: int,
+) -> Optional[float]:
+    """
+    A looser "minimum range anywhere" from points/lidar/depth, used for clearance checks.
+    """
+    if obs is None:
+        return None
+    o = _row(obs, env_idx)
+    if o is None:
+        return None
+
+    cand: list[float] = []
+
+    # points
+    if isinstance(o, dict):
+        for k, v in o.items():
+            kl = str(k).lower()
+            a = _to_numpy(v)
+            if a is None or a.size == 0:
+                continue
+            a = np.asarray(a, dtype=np.float64)
+            if not any(s in kl for s in ("lidar", "point", "pc", "cloud", "range", "returns")):
+                continue
+            if a.ndim == 2 and a.shape[0] == 3 and a.shape[1] >= 3:
+                a = a.T
+            if a.ndim != 2 or a.shape[1] < 3:
+                continue
+            p = a[:, :3]
+            n = np.linalg.norm(p, axis=1)
+            p = p[(n > 1e-2) & (n < 200.0)]
+            if p.size:
+                nn = np.linalg.norm(p, axis=1)
+                cand.append(float(np.min(nn)))
+            break
+    if not cand:
+        for a in _iter_tensor_leaves(o):
+            a = np.asarray(a, dtype=np.float64)
+            if a.ndim == 2 and a.shape[1] >= 3 and a.shape[0] >= 3:
+                p = a[:, :3]
+                n = np.linalg.norm(p, axis=1)
+                p = p[n > 1e-2]
+                if p.size:
+                    cand.append(float(np.min(np.linalg.norm(p.reshape((-1, 3)), axis=1))))
+                break
+
+    # depth min
+    dimg: Optional[np.ndarray] = None
+    if isinstance(o, dict):
+        for k, v in o.items():
+            kl = str(k).lower()
+            if any(s in kl for s in ("depth", "distance", "z_buf", "zbuf")) and dimg is None:
+                a = _to_numpy(v)
+                if a is not None and np.asarray(a).size:
+                    dimg = np.asarray(a)
+    if dimg is not None:
+        d = dimg
+        while d.ndim > 2 and d.shape[0] == 1:
+            d = d[0]
+        if d.ndim == 2:
+            d = d[np.isfinite(d)]
+            d = d[(d > 1e-3) & (d < 200.0)]
+            if d.size:
+                cand.append(float(np.min(d)))
+
+    if not cand:
+        return None
+    return float(np.min(np.asarray(cand, dtype=np.float64)))
+
+
+def estimate_contact_int_from_info(info: Any, env_idx: int) -> Optional[int]:
+    """
+    1/0 contact/collision in this step if the env reports it, else None.
+    """
+    v = estimate_collision_from_info(info, env_idx)
+    if v is None:
+        return None
+    return 1 if float(v) > 0.5 else 0

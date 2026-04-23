@@ -26,6 +26,7 @@ class Evaluator:
     slow_eval: BaseEvaluator
     weights: dict
     sensor_models: dict
+    loss_mode: str = "default"
     max_cost_usd: float = 10_000.0
     fast_collision_threshold: float = 0.95
     promising_collision_threshold: float = 0.35
@@ -88,6 +89,7 @@ class Evaluator:
                 "memory_limit_gb": design.hardware.memory_limit_gb,
                 "latency_budget_ms": design.hardware.latency_budget_ms,
             },
+            loss_mode=self.loss_mode,
         )
         return EvaluationResult(
             metrics=metrics,
