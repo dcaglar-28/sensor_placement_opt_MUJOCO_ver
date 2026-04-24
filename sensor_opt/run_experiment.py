@@ -16,7 +16,7 @@ import sys
 
 import yaml
 
-from sensor_opt.config.catalog import apply_sensor_catalog
+from sensor_opt.config.specs import prepare_experiment_config
 from sensor_opt.evaluation.pipeline import Evaluator
 from sensor_opt.inner_loop.isaac_evaluator import IsaacSimEvaluator
 from sensor_opt.inner_loop.mock_isaac_evaluator import MockIsaacEvaluator
@@ -28,8 +28,7 @@ from sensor_opt.search.factory import create_search
 def load_config(path: str) -> dict:
     with open(path) as f:
         cfg = yaml.safe_load(f)
-    cfg = apply_sensor_catalog(cfg)
-    return cfg
+    return prepare_experiment_config(cfg)
 
 
 def main():
