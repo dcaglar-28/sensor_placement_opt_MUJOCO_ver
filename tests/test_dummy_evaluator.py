@@ -70,7 +70,15 @@ def test_cma_converges_on_dummy(tmp_path):
         "sensor_budget": {"lidar": {"max_count": 1}, "camera": {"max_count": 1}},
         "mounting_slots": ["front", "rear", "top", "left", "right"],
         "sensor_models": SENSOR_MODELS,
-        "cma": {"sigma0": 0.3, "population_size": 10, "max_generations": 15, "tolx": 1e-6, "tolfun": 1e-7},
+        # tolx/tolfun=0 disables those stop criteria (0 is falsy in cma) so a single
+        # "flat" first generation does not end the run on CI; see outer_loop tie-jitter.
+        "cma": {
+            "sigma0": 0.35,
+            "population_size": 10,
+            "max_generations": 15,
+            "tolx": 0,
+            "tolfun": 0,
+        },
         "loss": {"alpha": 0.4, "beta": 0.4, "gamma": 0.2, "max_cost_usd": 10000.0},
         "inner_loop": {"mode": "mock_isaac", "n_episodes": 10, "mock_isaac": {"baseline_noise_std": 0.03, "latency_sec": 0.0, "stochastic_std": 0.01}},
         "logging": {"csv": True, "mlflow": False, "log_every_n_generations": 5, "results_dir": str(tmp_path)},

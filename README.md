@@ -27,6 +27,12 @@ Notes:
 - `--dummy` is an **alias** for the built-in `mock_isaac` evaluator (no Isaac Sim required).
 - To run explicitly via config, set `inner_loop.mode: mock_isaac`.
 
+Tests (after `pip install -r requirements.txt`):
+
+```bash
+python -m pytest tests/ -q
+```
+
 ## Google Colab + Isaac Lab (optional)
 
 The entry notebook is `notebooks/sensor_opt_isaaclab_colab.ipynb` (unofficial [Isaac Sim / Isaac Lab on Colab](https://github.com/j3soon/isaac-sim-colab) install scripts). A lighter HTTP-only walkthrough (mock Isaac) is in `notebooks/sensor_placement_opt_colab.ipynb`.
@@ -40,20 +46,43 @@ The entry notebook is `notebooks/sensor_opt_isaaclab_colab.ipynb` (unofficial [I
 5. **Environment variables (Colab / bridge)** — Set as needed: **`ISAAC_TASK`**, **`BRIDGE_MODE`** (`ground` or `obstacle`), **`MAX_STEPS`**. In **obstacle** mode the bridge can also use **`D_WARN`**, **`D_CLEAR`**, **`SIM_DT`**. The optimizer cell picks **`CONFIG_PATH`** from **`CONFIG_PATH`**, or defaults to `configs/default.yaml` vs `configs/obstacle_isaaclab.yaml` from **`BRIDGE_MODE`**.
 6. **Modes** — **`ground`**: `blind_spot_fraction` heuristics. **`obstacle`**: corridor metrics (`t_det_s_p95`, contact collision rate, safety fields) — pair with `configs/obstacle_isaaclab.yaml` and `loss.mode: obstacle_latency`.
 7. **JSON client** — Map the full `/run_rollouts` row with `eval_metrics_from_bridge_row()` so optional keys (`t_det_s_p95`, `safety_success`, …) are not dropped.
-8. **Port / process debugging** — If you see **`OSError: [Errno 98] Address already in use`**, stop old bridge processes (`pkill` / free the port). The notebook also includes optional helper cells (port check, **`JAX_PLATFORMS=cpu`**, `health` probe, `ps`, `nvidia-smi`, `tail` of `/tmp/isaaclab_sensor_bridge.log`) for the same default port.
-9. **USD sensor prims** — The bridge applies each candidate to **`sensor_models.<type>.isaac.prim_path`** (or **`mount_prim_paths` / `prim_paths`**, or env **`ISAAC_LIDAR_PRIM`**, **`ISAAC_CAMERA_PRIM`**, **`ISAAC_RADAR_PRIM`**) and **re-applies after every `env.reset()`**, because resets often restore default transforms. If no path is set, all candidates can look identical (e.g. `blind_spot_fraction` stuck at 1.0). The notebook’s interactive cell sets env vars the bridge subprocess inherits when you launch with `subprocess` without replacing `os.environ`.
+8. **Bridge options** — **`--video`** / **`ISAAC_VIDEO_DIR`**: record episodes when supported. **`--sensor-noise-std`** / **`SENSOR_NOISE_STD`**: optional range / heuristic noise (must match what you set in config as `inner_loop.isaac_sim.sensor_noise_std` for fair runs). Each HTTP request can also override noise per rollout.
+9. **Port / process debugging** — If you see **`OSError: [Errno 98] Address already in use`**, stop old bridge processes (`pkill` / free the port). The notebook also includes optional helper cells (port check, **`JAX_PLATFORMS=cpu`**, `health` probe, `ps`, `nvidia-smi`, `tail` of `/tmp/isaaclab_sensor_bridge.log`) for the same default port.
+10. **USD sensor prims** — The bridge applies each candidate to **`sensor_models.<type>.isaac.prim_path`** (or **`mount_prim_paths` / `prim_paths`**, or env **`ISAAC_LIDAR_PRIM`**, **`ISAAC_CAMERA_PRIM`**, **`ISAAC_RADAR_PRIM`**) and **re-applies after every `env.reset()`**, because resets often restore default transforms. If no path is set, all candidates can look identical (e.g. `blind_spot_fraction` stuck at 1.0). The notebook’s interactive cell sets env vars the bridge subprocess inherits when you launch with `subprocess` without replacing `os.environ`.
+11. **Paper figures (notebook)** — After an optimization run, a dedicated cell can render **SVG** plots via `IPython.display.SVG` (no matplotlib in `requirements.txt`): convergence (multi-run overlay), Pareto scatter, CMA-ES **σ** vs generation, correlation heatmap, top-down layout schematic, sample-efficiency curve, and commented stubs for baselines, CDFs, and hypervolume ablations. Point paths at the run directory (parent of `generations.csv`).
+
+## Sensor catalog (YAML)
+
+Configs can list a **`sensor_catalog`** (per-type USD prim paths, FOV, cost, and optional Isaac metadata) and **`sensor_choices` / slot** definitions. At load time, `apply_sensor_catalog()` in `sensor_opt/config/catalog.py` materializes the merged **`sensor_models`** dict used by the encoder and evaluators. This keeps one catalog per hardware family while reusing the same optimization pipeline.
+
+## Run outputs and paper-style artifacts
+
+Each CMA-ES run writes under the run directory (next to `generations.csv`):
+
+| File | Purpose |
+|------|---------|
+| `generations.csv` | Per-generation `best_loss`, `mean_loss`, `std_loss`, `cma_sigma` |
+| `final_result.json` | Best config, loss, run id |
+| `evaluated_pool.json` | Every candidate: `generation`, `objectives`, `config`, `cost_usd` |
+| `pareto_front.json` | Non-dominated set (multi-objective runs) |
+| `optimization_meta.json` | `population_size`, `generations`, `total_function_evals`, `pareto_size` |
+
+**Plotting** — `sensor_opt/plotting/convergence.py` and `sensor_opt/plotting/paper_figures.py` build **static SVG** strings (NumPy + stdlib) for notebooks: convergence, Pareto 2D scatter (marker size = sensor count, color = cost tier), σ vs generation, slot heatmap, parameter histograms, metric correlation, detection-latency CDF (from data you pass in), baseline bars, hypervolume vs budget, and best-loss vs evaluation count. Import `sensor_opt.plotting` or `sensor_opt.plotting.paper_figures` in Jupyter/Colab.
 
 ## Project Structure
 
 ```
 sensor_placement_opt/
 ├── notebooks/          # Colab walkthroughs (Isaac Lab + mock HTTP)
+├── scripts/            # isaaclab_sensor_bridge.py (Flask + Isaac)
 ├── sensor_opt/
+│   ├── config/         # apply_sensor_catalog (YAML catalog → sensor_models)
 │   ├── encoding/       # Encode/decode sensor configs ↔ float vectors
-│   ├── loss/           # L = α·collision + β·blind_spot + γ·cost
-│   ├── cma/            # CMA-ES outer loop wrapper
-│   ├── inner_loop/     # Isaac Sim evaluator + mock (CPU) evaluator
-│   └── logging/        # CSV + MLflow experiment tracking
+│   ├── loss/           # L = α·collision + β·blind_spot + γ·cost (modes in YAML)
+│   ├── cma/            # CMA-ES outer loop wrapper + Pareto
+│   ├── inner_loop/     # Isaac Sim evaluator, bridge client, mock evaluator
+│   ├── logging/        # CSV, JSON artifacts, MLflow
+│   └── plotting/       # SVG convergence + paper figures (no matplotlib)
 ├── configs/            # YAML experiment configs
 ├── tests/              # Unit tests (pytest)
 └── results/            # Auto-created run outputs

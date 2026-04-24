@@ -45,6 +45,8 @@ def _row(x: Any, env_idx: int) -> Any:
     """Index the first ("batch/env") dimension for common Isaac Lab tensor shapes."""
     if x is None:
         return None
+    if isinstance(x, dict):
+        return x
     try:
         import torch  # type: ignore
 
@@ -57,6 +59,35 @@ def _row(x: Any, env_idx: int) -> Any:
         return arr[env_idx]
     except Exception:
         return x
+
+
+def _unwrap_sensor_obs_dict(o: Any) -> Any:
+    """
+    Unwrap one level: ``{"policy": {"lidar": ...}}`` → ``{"lidar": ...}`` so
+    per-modality keys are not hidden behind a common RL/bridge wrapper.
+    """
+    if not isinstance(o, dict) or not o:
+        return o
+    for k in ("policy", "obs", "observations", "sensors", "perception", "sensors_state"):
+        if k in o and isinstance(o[k], dict) and o[k]:
+            inner = o[k]
+            names = " ".join(str(ik).lower() for ik in inner.keys())
+            if any(
+                s in names
+                for s in (
+                    "lidar",
+                    "point",
+                    "pc",
+                    "cloud",
+                    "depth",
+                    "range",
+                    "returns",
+                    "camera",
+                    "rgb",
+                )
+            ):
+                return inner
+    return o
 
 
 def _iter_tensor_leaves(obj: Any) -> Iterable[np.ndarray]:
@@ -313,6 +344,7 @@ def min_forward_range_from_obs(
     o = _row(obs, env_idx)
     if o is None:
         return None
+    o = _unwrap_sensor_obs_dict(o)
 
     cand: list[float] = []
     hfov_cam = float((sensor_models or {}).get("camera", {}).get("horizontal_fov_deg", 87.0))
@@ -398,6 +430,7 @@ def min_range_any_from_obs(
     o = _row(obs, env_idx)
     if o is None:
         return None
+    o = _unwrap_sensor_obs_dict(o)
 
     cand: list[float] = []
 
