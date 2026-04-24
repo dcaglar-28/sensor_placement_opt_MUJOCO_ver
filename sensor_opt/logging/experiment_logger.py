@@ -11,11 +11,16 @@ import json
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import numpy as np
 
-from sensor_opt.loss.loss import LossResult
+from sensor_opt.encoding.serialize_config import sensor_config_to_dict
+from sensor_opt.loss.loss import LossResult, _compute_effective_cost
+
+if TYPE_CHECKING:
+    from sensor_opt.cma.pareto import ParetoPoint
+    from sensor_opt.encoding.config import SensorConfig
 
 
 @dataclass
@@ -142,6 +147,76 @@ class ExperimentLogger:
                 mlflow.end_run()
             except Exception:
                 pass
+
+    def log_paper_artifacts(
+        self,
+        *,
+        global_configs: List["SensorConfig"],
+        global_objectives: List[dict],
+        eval_generations: List[int],
+        pareto_front: List["ParetoPoint"],
+        cfg: dict,
+    ) -> None:
+        """
+        Write JSON used by `sensor_opt.plotting.paper_figures` (Pareto, correlation, violins).
+
+        - evaluated_pool.json: every CMA candidate with generation index + objectives + pose params
+        - pareto_front.json: non-dominated set with n_active + cost_usd
+        - optimization_meta.json: pop size, total evaluations (for sample-efficiency figures)
+        """
+        sensor_models = cfg.get("sensor_models", {}) or {}
+        cma_cfg = cfg.get("cma", {}) or {}
+        pop_size = int(cma_cfg.get("population_size", 0) or 0)
+        n_gen = 0
+        if self.records:
+            n_gen = max(r.generation for r in self.records)
+
+        pool: List[dict] = []
+        n = min(
+            len(eval_generations),
+            len(global_configs),
+            len(global_objectives),
+        )
+        for i in range(n):
+            gen, conf, obj = int(eval_generations[i]), global_configs[i], global_objectives[i]
+            cost = float(_compute_effective_cost(conf, sensor_models))
+            row = {
+                "generation": gen,
+                "objectives": dict(obj),
+                "n_active_sensors": len(conf.active_sensors()),
+                "cost_usd": cost,
+                "config": sensor_config_to_dict(conf),
+            }
+            pool.append(row)
+
+        with open(self.run_dir / "evaluated_pool.json", "w") as f:
+            json.dump(pool, f, indent=2)
+
+        pf_out: List[dict] = []
+        for p in pareto_front:
+            c = p.config
+            cost = float(_compute_effective_cost(c, sensor_models))
+            pf_out.append(
+                {
+                    "index": int(p.index),
+                    "objectives": dict(p.objectives or {}),
+                    "n_active_sensors": len(c.active_sensors()),
+                    "cost_usd": cost,
+                    "config": sensor_config_to_dict(c),
+                }
+            )
+        with open(self.run_dir / "pareto_front.json", "w") as f:
+            json.dump(pf_out, f, indent=2)
+
+        meta = {
+            "run_id": self.run_id,
+            "population_size": pop_size,
+            "generations": n_gen,
+            "total_function_evals": len(global_configs),
+            "pareto_size": len(pareto_front),
+        }
+        with open(self.run_dir / "optimization_meta.json", "w") as f:
+            json.dump(meta, f, indent=2)
 
     def close(self) -> None:
         self._csv_file.close()

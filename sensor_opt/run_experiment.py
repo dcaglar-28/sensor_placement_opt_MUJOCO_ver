@@ -147,15 +147,7 @@ def main():
             ]
         }
         logger.log_final(result.best_loss_result, best_config_dict)
-        pareto_summary = [
-            {
-                "idx": p.index,
-                "objectives": p.objectives,
-            }
-            for p in result.pareto_front
-        ]
-        with open(logger.run_dir / "pareto_front.json", "w") as f:
-            json.dump(pareto_summary, f, indent=2)
+        # Pareto + full evaluated pool: written in `cma/outer_loop.py` as pareto_front.json / evaluated_pool.json
 
     print("\n[Experiment] Done.")
     print(f"[Experiment] Results saved to: results/{result.run_id}/")

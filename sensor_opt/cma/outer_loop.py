@@ -85,6 +85,7 @@ def run_outer_loop(
     generation  = 0
     global_configs: List[SensorConfig] = []
     global_objectives: List[dict] = []
+    eval_generations: List[int] = []
 
     noise_std  = inner_cfg.get("dummy", {}).get("noise_std", 0.05)
     n_episodes = inner_cfg.get("n_episodes", 15)
@@ -110,7 +111,7 @@ def run_outer_loop(
                     n_episodes=n_episodes,
                     rng=rng,
                 )
-                for config, metrics in zip(configs, metrics_list, strict=False):
+                for config, metrics in zip(configs, metrics_list):
                     lr = compute_loss(
                         metrics=metrics,
                         config=config,
@@ -126,6 +127,7 @@ def run_outer_loop(
                     fidelities.append("batched")
                     global_configs.append(config)
                     global_objectives.append(dict(lr.objectives or {}))
+                    eval_generations.append(generation)
             except Exception as e:
                 print(f"[CMA-ES] Batched evaluator error: {e}")
                 traceback.print_exc()
@@ -136,6 +138,7 @@ def run_outer_loop(
                 fidelities.clear()
                 global_configs = global_configs[:-len(configs)]
                 global_objectives = global_objectives[:-len(configs)]
+                eval_generations = eval_generations[:-len(configs)]
 
         if not losses:
             for config in configs:
@@ -185,6 +188,7 @@ def run_outer_loop(
                 fidelities.append(eval_result.fidelity)
                 global_configs.append(config)
                 global_objectives.append(dict(eval_result.objectives))
+                eval_generations.append(generation)
 
         es_losses = list(losses)
         if es_losses and float(np.max(es_losses) - np.min(es_losses)) == 0.0:
@@ -231,6 +235,17 @@ def run_outer_loop(
 
     final_pareto = pareto_front(global_configs, global_objectives)
     print(f"[CMA-ES] Pareto-front size: {len(final_pareto)}")
+
+    try:
+        logger.log_paper_artifacts(
+            global_configs=global_configs,
+            global_objectives=global_objectives,
+            eval_generations=eval_generations,
+            pareto_front=final_pareto,
+            cfg=cfg,
+        )
+    except Exception as e:
+        print(f"[CMA-ES] Could not write paper JSON artifacts: {e}")
 
     return OptimizationResult(
         best_config=best_config,
