@@ -47,11 +47,13 @@ class IsaacSimEvaluator(BaseEvaluator):
         # Expected to be provided by the user’s Isaac-side integration.
         # Must support:
         #   - reconfigure_sensors(env_idx, config, sensor_models)
-        #   - run_rollouts(n_episodes, rng) -> list[EvalMetrics] (len == num_envs)
+        #   - run_rollouts(n_episodes, rng, **optional kwargs) -> list[EvalMetrics] (len == num_envs)
+        #     e.g. `sensor_noise_std` (passed through from `inner_loop.isaac_sim` YAML for the HTTP bridge)
         self.env = self.isaac_sim_cfg.get("env", None)
         self.num_envs = int(self.isaac_sim_cfg.get("num_envs", 1))
         if self.num_envs < 1:
             raise ValueError("isaac_sim_cfg['num_envs'] must be >= 1")
+        self._sensor_noise_std = float(self.isaac_sim_cfg.get("sensor_noise_std", 0.0) or 0.0)
 
     def run(
         self,
@@ -119,7 +121,12 @@ class IsaacSimEvaluator(BaseEvaluator):
             # We pass a derived RNG for chunk-level determinism.
             chunk_seed = int(rng.integers(0, np.iinfo(np.int32).max))
             chunk_rng = np.random.default_rng(chunk_seed)
-            metrics_all = self.env.run_rollouts(n_episodes=n_episodes, rng=chunk_rng)
+            metrics_all = _call_run_rollouts(
+                self.env,
+                n_episodes=n_episodes,
+                rng=chunk_rng,
+                sensor_noise_std=self._sensor_noise_std,
+            )
 
             if not isinstance(metrics_all, list):
                 raise TypeError("env.run_rollouts(...) must return list[EvalMetrics]")
@@ -133,6 +140,20 @@ class IsaacSimEvaluator(BaseEvaluator):
             out.extend(metrics_all[:k])
 
         return out
+
+
+def _call_run_rollouts(env: object, n_episodes: int, rng: np.random.Generator, sensor_noise_std: float) -> list:
+    """
+    Call env.run_rollouts, passing sensor_noise_std when supported (e.g. Colab JSON bridge).
+    """
+    try:
+        return env.run_rollouts(  # type: ignore[call-arg]
+            n_episodes=n_episodes,
+            rng=rng,
+            sensor_noise_std=float(sensor_noise_std),
+        )
+    except TypeError:
+        return env.run_rollouts(n_episodes=n_episodes, rng=rng)  # type: ignore[call-arg]
 
 
 def evaluate(

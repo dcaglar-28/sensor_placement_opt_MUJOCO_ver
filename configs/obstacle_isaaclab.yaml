@@ -108,7 +108,9 @@ inner_loop:
   mode: "isaac_sim" # bridge-backed IsaacSimEvaluator
   n_episodes: 20
   max_steps_per_episode: 500
-  isaac_sim: {}
+  # Use the same `sensor_noise_std` in speed / accuracy / cost trial YAMLs for comparable noise.
+  isaac_sim:
+    sensor_noise_std: 0.0
 
 hardware:
   name: "not_used_in_obstacle_latency"

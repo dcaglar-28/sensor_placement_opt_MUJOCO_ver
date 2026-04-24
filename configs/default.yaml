@@ -108,7 +108,9 @@ inner_loop:
   mock_isaac:
     latency_sec: 0.15
     stochastic_std: 0.03
-  isaac_sim: {}
+  # Shared across trials: i.i.d. Gaussian on range observations (m); bridge applies to metrics.
+  isaac_sim:
+    sensor_noise_std: 0.0
 
 hardware:
   name: "jetson_orin_like"

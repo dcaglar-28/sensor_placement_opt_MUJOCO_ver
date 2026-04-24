@@ -134,6 +134,15 @@ def _p95(x: list[float]) -> float:
     return float(np.percentile(a, 95.0))
 
 
+def _noise_range_m(
+    x: Optional[float], rng: np.random.Generator, sigma_m: float
+) -> Optional[float]:
+    """Additive i.i.d. Gaussian on scalar range-style observations (meters)."""
+    if x is None or sigma_m <= 0.0:
+        return x
+    return float(x) + float(rng.normal(0.0, float(sigma_m)))
+
+
 def _try_get_physics_dt(env: Any) -> Optional[float]:
     # Isaac Lab / Isaac Sim: best-effort; fall back to CLI sim dt
     for path in (
@@ -318,6 +327,7 @@ class _BridgeState:
         obstacle_root: str = "/World/bridge_corridor",
         n_obstacles: int = 4,
         obstacle_size_m: float = 0.5,
+        sensor_noise_std: float = 0.0,
     ):
         self.num_envs = int(num_envs)
         if self.num_envs < 1:
@@ -339,6 +349,8 @@ class _BridgeState:
         self.obstacle_root = str(obstacle_root)
         self.n_obstacles = int(max(3, min(5, int(n_obstacles))))  # clamp 3..5
         self.obstacle_size_m = float(obstacle_size_m)
+        # Default i.i.d. noise on range observations (meters). Overridable per /run_rollouts.
+        self._default_sensor_noise = float(max(0.0, sensor_noise_std))
 
         self._configs: list[SensorConfig] = [SensorConfig(sensors=[]) for _ in range(self.num_envs)]
         self._models: list[dict] = [{} for _ in range(self.num_envs)]
@@ -400,10 +412,16 @@ class _BridgeState:
             self._warned_vec_reset = True
         return e.reset()
 
-    def run_rollouts(self, n_episodes: int, seed: int) -> list[dict[str, float]]:
+    def run_rollouts(
+        self, n_episodes: int, seed: int, sensor_noise_std: Optional[float] = None
+    ) -> list[dict[str, float]]:
+        noise = self._default_sensor_noise if sensor_noise_std is None else float(sensor_noise_std)
+        noise = float(max(0.0, noise))
         out: list[dict[str, float]] = []
         for env_idx in range(self.num_envs):
-            m = self._rollout_one_env(env_idx=env_idx, n_episodes=int(n_episodes), seed=int(seed))
+            m = self._rollout_one_env(
+                env_idx=env_idx, n_episodes=int(n_episodes), seed=int(seed), sensor_noise_std=noise
+            )
             d = asdict(m)
             # ensure JSON-friendly scalars
             for k, v in list(d.items()):
@@ -497,7 +515,9 @@ class _BridgeState:
                         self._warned_prim.add(k)
         return
 
-    def _rollout_one_env(self, env_idx: int, n_episodes: int, seed: int):
+    def _rollout_one_env(
+        self, env_idx: int, n_episodes: int, seed: int, sensor_noise_std: float = 0.0
+    ):
         """
         Run `n_episodes` episodes in the *vectorized* Isaac Lab env, aggregating a scalar
         `EvalMetrics` for the `env_idx` row.
@@ -510,7 +530,9 @@ class _BridgeState:
 
         n_eps = max(1, int(n_episodes))
         if str(self.bridge_mode) == "obstacle":
-            return self._rollout_one_env_obstacle_risk(env_idx=env_idx, n_episodes=n_eps, seed=int(seed))
+            return self._rollout_one_env_obstacle_risk(
+                env_idx=env_idx, n_episodes=n_eps, seed=int(seed), sensor_noise_std=float(sensor_noise_std)
+            )
         success_rates: list[float] = []
         coll_rates: list[float] = []
         blind_rates: list[float] = []
@@ -583,7 +605,17 @@ class _BridgeState:
 
             if self.bridge_mode == "ground":
                 if ep_blinds:
-                    blind_rates.append(float(np.mean(ep_blinds)))
+                    v = float(np.mean(ep_blinds))
+                    # Same noise scale as t_det / ranges: map meters -> [0,1] jitter (documented in YAML)
+                    if float(sensor_noise_std) > 0.0:
+                        v = float(
+                            np.clip(
+                                v + float(rng.normal(0.0, float(sensor_noise_std) * 0.1)),
+                                0.0,
+                                1.0,
+                            )
+                        )
+                    blind_rates.append(v)
                 else:
                     base = fast_baseline_metrics(
                         cfg0,
@@ -631,7 +663,9 @@ class _BridgeState:
             n_episodes=n_eps,
         )
 
-    def _rollout_one_env_obstacle_risk(self, env_idx: int, n_episodes: int, seed: int):
+    def _rollout_one_env_obstacle_risk(
+        self, env_idx: int, n_episodes: int, seed: int, sensor_noise_std: float = 0.0
+    ):
         """
         Obstacle-corridor / safety metrics:
         - Spawns 3-5 static cuboids per reset (see `_ensure_obstacles_for_env`)
@@ -646,6 +680,7 @@ class _BridgeState:
         t_max = float(self.max_steps) * float(dt)
         d_warn = float(self.d_warn)
         d_clear = float(self.d_clear)
+        sigma_m = float(max(0.0, sensor_noise_std))
 
         t_dets: list[float] = []
         coll: list[float] = []
@@ -685,15 +720,21 @@ class _BridgeState:
 
             g0 = gr.min_range_any_from_obs(obs, env_idx=env_idx)
             if g0 is not None:
-                min_glob = float(g0)
+                g0n = _noise_range_m(float(g0), erng, sigma_m)
+                min_glob = g0n
             b0 = gr.estimate_blind_spot_fraction_from_obs(
                 obs, env_idx=env_idx, sensor_models=self._models[env_idx]
             )
             if b0 is not None:
-                ep_blind.append(float(b0))
+                bj = float(b0)
+                if sigma_m > 0.0:
+                    bj = float(np.clip(bj + float(erng.normal(0.0, sigma_m * 0.1)), 0.0, 1.0))
+                ep_blind.append(bj)
             fr0 = gr.min_forward_range_from_obs(
                 obs, env_idx=env_idx, sensor_models=self._models[env_idx]
             )
+            if fr0 is not None:
+                fr0 = _noise_range_m(float(fr0), erng, sigma_m)
             if t_det is None and fr0 is not None and float(fr0) < d_warn - 1e-6:
                 t_det = 0.0
 
@@ -707,15 +748,22 @@ class _BridgeState:
                 fr = gr.min_forward_range_from_obs(
                     obs, env_idx=env_idx, sensor_models=self._models[env_idx]
                 )
+                if fr is not None:
+                    fr = _noise_range_m(float(fr), erng, sigma_m)
                 g = gr.min_range_any_from_obs(obs, env_idx=env_idx)
                 if g is not None:
-                    min_glob = g if min_glob is None else float(min(float(min_glob), float(g)))
+                    gn = _noise_range_m(float(g), erng, sigma_m)
+                    if gn is not None:
+                        min_glob = gn if min_glob is None else float(min(float(min_glob), float(gn)))
 
                 b = gr.estimate_blind_spot_fraction_from_obs(
                     obs, env_idx=env_idx, sensor_models=self._models[env_idx]
                 )
                 if b is not None:
-                    ep_blind.append(float(b))
+                    bj = float(b)
+                    if sigma_m > 0.0:
+                        bj = float(np.clip(bj + float(erng.normal(0.0, sigma_m * 0.1)), 0.0, 1.0))
+                    ep_blind.append(bj)
 
                 # t_det: first time forward range is below d_warn
                 if t_det is None and fr is not None and float(fr) < d_warn - 1e-6:
@@ -858,7 +906,13 @@ class _BridgeRequestHandler(BaseHTTPRequestHandler):
             if self.path == "/run_rollouts":
                 n_episodes = int(body.get("n_episodes", 1))
                 seed = int(body.get("seed", 0))
-                metrics = self._state.run_rollouts(n_episodes=n_episodes, seed=seed)
+                if "sensor_noise_std" in body:
+                    sn = float(body["sensor_noise_std"])
+                    metrics = self._state.run_rollouts(
+                        n_episodes=n_episodes, seed=seed, sensor_noise_std=sn
+                    )
+                else:
+                    metrics = self._state.run_rollouts(n_episodes=n_episodes, seed=seed)
                 return _json_response(self, 200, {"metrics": metrics})
             return _json_response(self, 404, {"error": f"unknown path: {self.path}"})
         except Exception as e:
@@ -875,6 +929,9 @@ def main() -> int:
     p.add_argument("--port", type=int, default=8010, help="HTTP port for /reconfigure_sensors and /run_rollouts")
     p.add_argument("--max-steps", type=int, default=500, help="Per-episode cap (prevents runaway loops).")
     p.add_argument("--repo-root", type=str, default="", help="Path to the `sensor_placement_opt` git checkout (enables `import sensor_opt`).")
+    p.add_argument("--video", action="store_true", help="Record rollout videos via gymnasium RecordVideo wrapper.")
+    p.add_argument("--video_length", type=int, default=200, help="Number of frames per recorded video clip.")
+    p.add_argument("--video_interval", type=int, default=1, help="Record every N episodes (1 = every episode).")
     p.add_argument(
         "--bridge-mode",
         type=str,
@@ -917,6 +974,17 @@ def main() -> int:
         default=0.5,
         help="Approximate cuboid size in meters (passed to omni.isaac.core.objects.FixedCuboid).",
     )
+    p.add_argument(
+        "--sensor-noise-std",
+        dest="sensor_noise_std",
+        type=float,
+        default=0.0,
+        help=(
+            "Std dev of i.i.d. Gaussian noise on range-like observations (meters). "
+            "The optimizer can override per request via JSON sensor_noise_std on /run_rollouts. "
+            "Environment variable SENSOR_NOISE_STD overrides this default when set."
+        ),
+    )
 
     # Import after argparse so the script is importable in non-Isaac dev machines.
     try:
@@ -938,6 +1006,13 @@ def main() -> int:
 
     if unknown:
         print(f"[isaaclab_sensor_bridge] Ignoring unknown args: {unknown}", file=sys.stderr)
+
+    sensor_noise_bridge = float(getattr(args, "sensor_noise_std", 0.0) or 0.0)
+    if os.environ.get("SENSOR_NOISE_STD"):
+        try:
+            sensor_noise_bridge = float(os.environ["SENSOR_NOISE_STD"])
+        except ValueError:
+            pass
 
     if not args.task:
         # Reasonable defaults for Colab + Isaac Lab 2.1 common demos:
@@ -977,6 +1052,19 @@ def main() -> int:
             pass
 
     env = gym.make(args.task, cfg=env_cfg)
+    if bool(args.video):
+        from gymnasium.wrappers.record_video import RecordVideo  # noqa: WPS433 (runtime import in Isaac runtime)
+
+        video_dir = os.environ.get("ISAAC_VIDEO_DIR", "/tmp/isaaclab_video")
+        os.makedirs(video_dir, exist_ok=True)
+        env = RecordVideo(
+            env,
+            video_folder=str(video_dir),
+            episode_trigger=lambda ep_id: int(ep_id) % max(1, int(args.video_interval)) == 0,
+            name_prefix=f"bridge_{args.bridge_mode}",
+            video_length=int(args.video_length),
+        )
+        print(f"[isaaclab_sensor_bridge] Video recording ON → {video_dir}", flush=True)
 
     state = _BridgeState(
         num_envs=int(args.num_envs),
@@ -994,6 +1082,7 @@ def main() -> int:
         obstacle_root=str(args.obstacle_root),
         n_obstacles=int(args.n_obstacles),
         obstacle_size_m=float(args.obstacle_size),
+        sensor_noise_std=sensor_noise_bridge,
     )
 
     httpd = ThreadingHTTPServer((args.host, int(args.port)), _HandlerFactory(state))
@@ -1002,7 +1091,7 @@ def main() -> int:
     print(f"[isaaclab_sensor_bridge] listening on http://{args.host}:{args.port}")
     print(
         f"[isaaclab_sensor_bridge] task={args.task!r} num_envs={int(args.num_envs)} "
-        f"bridge_mode={args.bridge_mode!r}"
+        f"bridge_mode={args.bridge_mode!r} default_sensor_noise_std_m={sensor_noise_bridge!r}"
     )
 
     # Block forever in main thread; user stops with interrupt (Colab) or process kill
