@@ -1,0 +1,113 @@
+# Isaac Lab obstacle + catalog-quality sensor / compute parameters (IMX490 + AT128 + Apple Silicon)
+#
+# Sensor models (indicative numbers from public datasheets / marketing; tune costs for your program):
+# - LiDAR: Hesai AT128 — 120° × 25.4° FOV, 128 channels, >1.5M pts/s (single return), long range (see Hesai product page)
+#   https://www.hesaitech.com/en/AT128
+# - Camera: Sony IMX490 — 5.4 MP effective (e.g. 2896×1876), automotive HDR/LED-flicker CMOS; lens sets FoV
+#   https://www.sony.com/en/SonyInfo/News/Press/201812/18-098E/
+# Hardware: Apple Silicon–style unified memory (e.g. M2 Ultra class GPU core count, bandwidth). Use the machine that
+#   will run your Safety/vision stack and replace gpu_cores / unified_memory_gb / memory_bandwidth_gbps with measured values.
+#
+# Inventory example: up to 6 AT128-class lidars and 3 IMX490 vision channels; optimizer may use a subset.
+# (Encoder uses `camera` for the vision / RGB~RGB-D path; this block models the high-res color imager.)
+
+experiment:
+  name: "obstacle_isaaclab_imx490_at128_apple"
+  seed: 42
+
+search:
+  type: cma
+
+sensor_budget:
+  lidar:
+    usermax: 6
+  camera:
+    usermax: 3
+
+sensor_models:
+  lidar:
+    isaac:
+      prim_path: ""
+    model_name: "Hesai AT128"
+    cost_usd: 5000.0
+    # Nominal per Hesai public materials (10% target reflectivity, etc.); replace with your integration spec.
+    range_m: 200.0
+    horizontal_fov_deg: 120.0
+    vertical_fov_deg: 25.4
+    beams: 128
+    points_per_second: 1530000
+    mass_kg: 0.94
+    blind_spot_reduction_factor: 0.90
+    compute_tops: 25.0
+    memory_gb: 2.5
+    latency_ms: 25.0
+  camera:
+    isaac:
+      prim_path: ""
+    model_name: "Sony IMX490 (5.4 MP effective)"
+    cost_usd: 300.0
+    effective_pixels_w: 2896
+    effective_pixels_h: 1876
+    # FoV is lens- and module-dependent; set to your calibration.
+    range_m: 200.0
+    horizontal_fov_deg: 100.0
+    vertical_fov_deg: 60.0
+    depth_accuracy_pct: 1.5
+    mass_kg: 0.2
+    blind_spot_reduction_factor: 0.5
+    compute_tops: 5.0
+    memory_gb: 0.8
+    latency_ms: 6.0
+
+mounting_slots:
+  - front
+  - rear
+  - left
+  - right
+  - top
+  - front-left
+  - front-right
+  - rear-left
+  - rear-right
+
+cma:
+  sigma0: 0.3
+  population_size: 20
+  max_generations: 100
+  tolx: 1e-4
+  tolfun: 1e-5
+
+loss:
+  mode: obstacle_latency
+  alpha: 1.0
+  beta: 100.0
+  gamma: 0.0
+  max_cost_usd: 50000.0
+  t_det_max_s: 10.0
+
+inner_loop:
+  mode: "isaac_sim"
+  n_episodes: 20
+  max_steps_per_episode: 500
+  isaac_sim:
+    sensor_noise_std: 0.0
+
+hardware:
+  name: "apple_silicon_safety_vision"
+  # Example: M2 Ultra class — replace with the SoC you use for a Safety/vision (unified memory) machine.
+  gpu_cores: 76
+  unified_memory_gb: 192.0
+  memory_bandwidth_gbps: 800.0
+  compute_limit_tops: 1e9
+  memory_limit_gb: 1e9
+  latency_budget_ms: 1e9
+
+multi_fidelity:
+  enabled: false
+
+logging:
+  csv: true
+  mlflow: true
+  mlflow_tracking_uri: "mlruns"
+  log_every_n_generations: 1
+  results_dir: "results"

@@ -91,7 +91,7 @@ cma:
   population_size: 20
   max_generations: 100
   tolx: 1e-4
-  tofun: 1e-5
+  tolfun: 1e-5
 
 loss:
   mode: obstacle_latency
@@ -113,7 +113,12 @@ inner_loop:
     sensor_noise_std: 0.0
 
 hardware:
-  name: "not_used_in_obstacle_latency"
+  name: "colab_t4_like"
+  # Required for Isaac Sim runs. These describe the machine running the bridge,
+  # and are separate from per-sensor compute/memory/latency fields.
+  gpu_cores: 2560
+  unified_memory_gb: 16.0
+  memory_bandwidth_gbps: 320.0
   compute_limit_tops: 1e9
   memory_limit_gb: 1e9
   latency_budget_ms: 1e9

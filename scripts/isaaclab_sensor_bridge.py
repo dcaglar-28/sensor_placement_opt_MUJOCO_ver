@@ -1002,6 +1002,17 @@ def main() -> int:
     p.add_argument("--task", type=str, default=None, help="Name of the Isaac Lab task.")
     p.add_argument("--disable_fabric", action="store_true", default=False, help="Disable Fabric (Isaac Lab standard flag).")
     AppLauncher.add_app_launcher_args(p)
+    # Some Isaac Lab builds do not register --enable-cameras on the parser, but this script
+    # and README still reference it. Add if missing; ignore duplicate-option errors.
+    try:
+        p.add_argument(
+            "--enable-cameras",
+            action="store_true",
+            default=False,
+            help="Set env_cfg.sim.render.enable_camera_views (depth for ground-mode heuristics).",
+        )
+    except argparse.ArgumentError:
+        pass
     args, unknown = p.parse_known_args()
 
     if unknown:
@@ -1044,7 +1055,7 @@ def main() -> int:
         num_envs=int(args.num_envs),
         use_fabric=not bool(args.disable_fabric),
     )
-    if args.enable_cameras:
+    if bool(getattr(args, "enable_cameras", False)):
         # Common Isaac Lab pattern for camera-based tasks
         try:
             env_cfg.sim.render.enable_camera_views = True

@@ -55,6 +55,8 @@ The entry notebook is `notebooks/sensor_opt_isaaclab_colab.ipynb` (unofficial [I
 
 Configs can list a **`sensor_catalog`** (per-type USD prim paths, FOV, cost, and optional Isaac metadata) and **`sensor_choices` / slot** definitions. At load time, `apply_sensor_catalog()` in `sensor_opt/config/catalog.py` materializes the merged **`sensor_models`** dict used by the encoder and evaluators. This keeps one catalog per hardware family while reusing the same optimization pipeline.
 
+Per-type **inventory** goes in **`sensor_budget`**: `usermax` is how many units of that sensor you *can* install (copied to `max_count` for the encoder if you omit `max_count`). The search can use **any** count from 0 up to that cap; unused capacity stays `disabled` in the encoded layout, so you do not have to use every unit. Optional `min_count` is a floor (e.g. at least one camera). You may set `usermax` and `max_count` to the same integer, or only one of them. Machine hardware specs such as `gpu_cores`, `unified_memory_gb`, and `memory_bandwidth_gbps` are validated only for `inner_loop.mode: isaac_sim`; mock runs do not need them.
+
 ## Run outputs and paper-style artifacts
 
 Each CMA-ES run writes under the run directory (next to `generations.csv`):
