@@ -6,6 +6,7 @@ invalid/empty user input does not break Isaac or `prepare_experiment_config`.
 from __future__ import annotations
 
 import math
+import os
 from copy import deepcopy
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, Union
@@ -23,6 +24,8 @@ ISAAC_SAFETY: Dict[str, Any] = {
         "gpu_cores": {"def": 2560, "min": 1, "max": 1_000_000},
         "unified_memory_gb": {"def": 16.0, "min": 0.5, "max": 8192.0},
         "memory_bandwidth_gbps": {"def": 320.0, "min": 0.1, "max": 20_000.0},
+        # Sensor placement budget (USD), mirrors `loss.max_cost_usd` bounds for Colab defaults.
+        "cost_budget_usd": {"def": 10_000.0, "min": 0.0, "max": 1.0e15},
     },
     "inner_loop": {
         "n_episodes": {"def": 20, "min": 1, "max": 1_000_000},
@@ -155,11 +158,38 @@ def _read_str_safety(
     return s
 
 
+def _apply_sensor_budget_from_env(raw: RepoDict) -> None:
+    """If SENSOR_*_MAX / SENSOR_*_MIN are set, copy into `sensor_budget` (Colab)."""
+    sb = raw.get("sensor_budget")
+    if not isinstance(sb, dict):
+        return
+    udef = ISAAC_SAFETY["sensor_budget"]["default_usermax"]
+    mnspec: Dict[str, Any] = {"def": 0, "min": 0, "max": int(udef["max"])}
+    for emax, emin, stype in (
+        ("SENSOR_LIDAR_MAX", "SENSOR_LIDAR_MIN", "lidar"),
+        ("SENSOR_CAMERA_MAX", "SENSOR_CAMERA_MIN", "camera"),
+        ("SENSOR_RADAR_MAX", "SENSOR_RADAR_MIN", "radar"),
+    ):
+        if stype not in sb or not isinstance(sb[stype], dict):
+            continue
+        sp0 = sb[stype]
+        if emax in os.environ:
+            s = os.environ[emax].strip()
+            n = parse_int_user(s, udef)[0]
+            sp0["usermax"] = int(n)
+            sp0.pop("max_count", None)
+        if emin in os.environ:
+            s = os.environ[emin].strip()
+            m = parse_int_user(s, mnspec)[0]
+            sp0["min_count"] = int(m)
+
+
 def apply_safety_guards_experiment_config(raw: RepoDict) -> None:
     """
     In-place: enforce ranges and required keys after prompts or external edits
     so `prepare_experiment_config` and the bridge do not see broken values.
     """
+    _apply_sensor_budget_from_env(raw)
     is_isaac = str(_in(raw, "inner_loop", "mode") or "").lower() == "isaac_sim"
     if is_isaac:
         h = raw.setdefault("hardware", {})
@@ -189,6 +219,7 @@ def apply_safety_guards_experiment_config(raw: RepoDict) -> None:
 
     sb = raw.get("sensor_budget")
     udef = ISAAC_SAFETY["sensor_budget"]["default_usermax"]
+    mnspec2: Dict[str, Any] = {"def": 0, "min": 0, "max": int(udef["max"])}
     if isinstance(sb, dict):
         for t, sp0 in list(sb.items()):
             if not isinstance(sp0, dict):
@@ -203,6 +234,15 @@ def apply_safety_guards_experiment_config(raw: RepoDict) -> None:
                 _alert(f"apply_safety_guards: sensor_budget[{t!r}].usermax = {n} ({reas}).")
             sp0["usermax"] = int(n)
             sp0.pop("max_count", None)
+            mraw = str(int(sp0.get("min_count", 0) or 0))
+            mn, fb2, reas2 = parse_int_user(mraw, mnspec2)
+            if int(mn) > int(n):
+                mn = n
+                fb2 = True
+                reas2 = "min_count > usermax"
+            if fb2:
+                _alert(f"apply_safety_guards: sensor_budget[{t!r}].min_count = {mn} ({reas2}).")
+            sp0["min_count"] = int(mn)
 
     il = raw.get("inner_loop")
     in_ep, stp = ISAAC_SAFETY["inner_loop"]["n_episodes"], ISAAC_SAFETY["inner_loop"]["max_steps_per_episode"]
@@ -289,27 +329,79 @@ def prompt_sensor_budget_usermax(raw: RepoDict) -> None:
         spec0.pop("max_count", None)
 
 
+def _default_int_for_prompt(
+    env_key: str, h: Dict[str, Any], hkey: str, gspec: Dict[str, Any]
+) -> Dict[str, Any]:
+    s = os.environ.get(env_key, "").strip()
+    if s:
+        d = int(parse_int_user(s, gspec)[0])
+    else:
+        v = h.get(hkey)
+        if v is not None:
+            d = int(parse_int_user(str(int(v)), gspec)[0])
+        else:
+            d = int(gspec["def"])
+    return {**gspec, "def": d}
+
+
+def _default_float_for_prompt(
+    env_key: str, h: Dict[str, Any], hkey: str, fspec: Dict[str, Any]
+) -> Dict[str, Any]:
+    s = os.environ.get(env_key, "").strip()
+    if s:
+        d = float(parse_float_user(s, fspec)[0])
+    else:
+        v = h.get(hkey)
+        if v is not None:
+            d = float(parse_float_user(str(v), fspec)[0])
+        else:
+            d = float(fspec["def"])
+    return {**fspec, "def": d}
+
+
+def _default_loss_cost_for_prompt(raw: RepoDict) -> Dict[str, Any]:
+    lspec0 = ISAAC_SAFETY["loss"]["max_cost_usd"]
+    cbd = ISAAC_SAFETY["hardware"]["cost_budget_usd"]
+    lo = raw.get("loss")
+    s = os.environ.get("HW_COST_BUDGET_USD", "").strip()
+    if s:
+        d = float(parse_float_user(s, lspec0)[0])
+    elif isinstance(lo, dict) and lo.get("max_cost_usd") is not None:
+        d = float(parse_float_user(str(lo.get("max_cost_usd", 0) or 0.0), lspec0)[0])
+    else:
+        d = float(cbd["def"])
+    return {**lspec0, "def": d}
+
+
 def prompt_isaac_hardware_only(raw: RepoDict) -> None:
+    """Prompt only gpu_cores, unified_memory_gb, and loss `max_cost_usd` (Colab / Isaac)."""
     h = raw.setdefault("hardware", {})
     if not isinstance(h, dict):
         raw["hardware"] = {}
         h = raw["hardware"]
-    h["gpu_cores"] = _read_int("hardware.gpu_cores", "GPU cores (Isaac / machine)", ISAAC_SAFETY["hardware"]["gpu_cores"])
+    gspec = _default_int_for_prompt("HW_GPU_CORES", h, "gpu_cores", ISAAC_SAFETY["hardware"]["gpu_cores"])
+    h["gpu_cores"] = _read_int("hardware.gpu_cores", "GPU cores (Isaac / machine)", gspec)
+    uspec = _default_float_for_prompt(
+        "HW_UNIFIED_MEMORY_GB", h, "unified_memory_gb", ISAAC_SAFETY["hardware"]["unified_memory_gb"]
+    )
     h["unified_memory_gb"] = _read_float(
-        "hardware.unified_memory_gb", "Unified memory (GB) (Isaac / machine)", ISAAC_SAFETY["hardware"]["unified_memory_gb"]
+        "hardware.unified_memory_gb", "Unified memory (GB) (Isaac / machine)", uspec
     )
-    h["memory_bandwidth_gbps"] = _read_float(
-        "hardware.memory_bandwidth_gbps",
-        "Memory bandwidth (GB/s) (Isaac / machine)",
-        ISAAC_SAFETY["hardware"]["memory_bandwidth_gbps"],
-    )
-    dname = str(ISAAC_SAFETY["experiment"]["name"]["def"])
-    h["name"] = _read_str_safety("hardware.name", "Host hardware label (name)", default=dname, max_len=80)
+    h.setdefault("memory_bandwidth_gbps", float(ISAAC_SAFETY["hardware"]["memory_bandwidth_gbps"]["def"]))
+    h.setdefault("name", str(ISAAC_SAFETY["experiment"]["name"]["def"]))
+
+    lo = raw.setdefault("loss", {})
+    if not isinstance(lo, dict):
+        lo = {}
+        raw["loss"] = lo
+    cspec = _default_loss_cost_for_prompt(raw)
+    lo["max_cost_usd"] = _read_float("loss.max_cost_usd", "Cost budget (USD) (sensor / run cap)", cspec)
 
 
 def prompt_colab_experiment_interactive(
     raw: RepoDict, *, include_hardware: bool = True, include_cma: bool = True, include_loss: bool = True
 ) -> None:
+    mode_is_isaac = str(_in(raw, "inner_loop", "mode") or "").lower() == "isaac_sim"
     ex0 = raw.setdefault("experiment", {})
     if not isinstance(ex0, dict):
         ex0 = {}
@@ -320,9 +412,7 @@ def prompt_colab_experiment_interactive(
     ex0["name"] = _read_str_safety("experiment.name", "Experiment name", default=dname0, max_len=nmax)
     ex0["seed"] = _read_int("experiment.seed", f"Random seed  (suggested: {ex0.get('seed', 42)!r})", esn["seed"])  # type: ignore[index]
 
-    prompt_sensor_budget_usermax(raw)
-
-    if include_hardware and str(_in(raw, "inner_loop", "mode") or "").lower() == "isaac_sim":
+    if include_hardware and mode_is_isaac:
         prompt_isaac_hardware_only(raw)
 
     il = raw.setdefault("inner_loop", {})
@@ -364,7 +454,10 @@ def prompt_colab_experiment_interactive(
         if str(loss0.get("mode", "")).lower() == "obstacle_latency":
             loss0["alpha"] = _read_float("loss.alpha", "Loss alpha (p95 term)", ls["alpha"])
             loss0["beta"] = _read_float("loss.beta", "Loss beta (collision term)", ls["beta"])
-        loss0["max_cost_usd"] = _read_float("loss.max_cost_usd", "Loss max_cost_usd (budget cap)", ls["max_cost_usd"])
+        if not (include_hardware and mode_is_isaac):
+            loss0["max_cost_usd"] = _read_float(
+                "loss.max_cost_usd", "Loss max_cost_usd (budget cap)", ls["max_cost_usd"]
+            )
         if "t_det_max_s" in loss0:
             loss0["t_det_max_s"] = _read_float("loss.t_det_max_s", "Loss t_det_max_s (p95 normalizer)", ls["t_det_max_s"])
 

@@ -63,6 +63,26 @@ def test_prompt_sensor_budget_no_input_all_defaults(monkeypatch):
     assert n == 2
 
 
+def test_apply_safety_guards_applies_sensor_env_overrides(monkeypatch):
+    monkeypatch.setenv("SENSOR_LIDAR_MAX", "3")
+    monkeypatch.setenv("SENSOR_CAMERA_MIN", "1")
+    raw = {
+        "inner_loop": {"mode": "isaac_sim", "n_episodes": 1, "max_steps_per_episode": 1, "isaac_sim": {"sensor_noise_std": 0.0}},
+        "sensor_budget": {
+            "lidar": {"usermax": 0},
+            "camera": {"usermax": 2},
+            "radar": {"usermax": 0},
+        },
+        "loss": {"mode": "obstacle_latency", "max_cost_usd": 1.0},
+        "cma": {"max_generations": 1, "population_size": 2, "sigma0": 0.1},
+        "experiment": {"name": "e", "seed": 0},
+        "hardware": {"gpu_cores": 1, "unified_memory_gb": 1.0, "memory_bandwidth_gbps": 1.0},
+    }
+    apply_safety_guards_experiment_config(raw)
+    assert raw["sensor_budget"]["lidar"]["usermax"] == 3
+    assert raw["sensor_budget"]["camera"]["min_count"] == 1
+
+
 def test_apply_safety_guards_recovers_bad_hardware():
     raw = {
         "inner_loop": {"mode": "isaac_sim", "n_episodes": -1, "max_steps_per_episode": 0, "isaac_sim": {"sensor_noise_std": 1e9}},
@@ -79,9 +99,9 @@ def test_apply_safety_guards_recovers_bad_hardware():
     assert p["inner_loop"]["n_episodes"] >= 1
 
 
-def test_prompt_isaac_hardware_int_and_floats_and_name(monkeypatch):
-    # gpu (int), unified, bandwidth (floats), name (str)
-    lines = iter(["1200", "32", "400.5", "mybox"])
+def test_prompt_isaac_hardware_int_floats_and_cost_budget(monkeypatch):
+    # gpu (int), unified (GB), loss max_cost_usd (float); YAML defaults for bandwidth/name
+    lines = iter(["1200", "32", "750.0"])
 
     def fake(_p):
         return next(lines)
@@ -91,5 +111,5 @@ def test_prompt_isaac_hardware_int_and_floats_and_name(monkeypatch):
     prompt_isaac_hardware_only(raw)
     assert raw["hardware"]["gpu_cores"] == 1200
     assert raw["hardware"]["unified_memory_gb"] == 32.0
-    assert raw["hardware"]["memory_bandwidth_gbps"] == 400.5
-    assert raw["hardware"]["name"] == "mybox"
+    assert raw["hardware"]["memory_bandwidth_gbps"] == 320.0
+    assert raw["loss"]["max_cost_usd"] == 750.0
