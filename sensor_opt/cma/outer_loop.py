@@ -23,6 +23,7 @@ from sensor_opt.encoding.config import (
     SensorConfig,
     config_vector_size,
     decode,
+    floats_per_sensor,
     make_initial_vector,
 )
 from sensor_opt.evaluation.base import BaseEvaluator
@@ -57,15 +58,24 @@ def run_outer_loop(
 
     sensor_budget  = cfg["sensor_budget"]
     mounting_slots = cfg["mounting_slots"]
-    fixed_mount    = bool(cfg.get("fixed_mount_order", False))
+    # `fixed_sensor_geometry` only shrinks the CMA search vector (type+active / mount); it does not
+    # change `loss`, `loss_cfg`, or `hardware`—those are always applied in `compute_loss` / eval.
+    fix_geometry   = bool(cfg.get("fixed_sensor_geometry", False))
+    fixed_mount    = bool(cfg.get("fixed_mount_order", False)) or fix_geometry
+    decode_kw = {
+        "fixed_mount_order": fixed_mount,
+        "fixed_sensor_geometry": fix_geometry,
+        "default_sensor_pose": cfg.get("default_sensor_pose", {}) or {},
+    }
+    fper = floats_per_sensor(fix_geometry)
     sensor_models  = cfg["sensor_models"]
     cma_cfg        = cfg["cma"]
     loss_cfg       = cfg["loss"]
     loss_mode      = str(loss_cfg.get("mode", "default"))
     inner_cfg      = cfg["inner_loop"]
 
-    n_expected = config_vector_size(sensor_budget)
-    x0 = make_initial_vector(sensor_budget, mounting_slots)
+    n_expected = config_vector_size(sensor_budget, fix_geometry)
+    x0 = make_initial_vector(sensor_budget, mounting_slots, fix_geometry)
     if cma_cfg.get("x0") is not None:
         x0 = np.asarray(cma_cfg["x0"], dtype=np.float64)
         if x0.shape != (n_expected,):
@@ -74,7 +84,7 @@ def run_outer_loop(
                 f"(config_vector_size for current sensor_budget)."
             )
     dim = len(x0)
-    print(f"[CMA-ES] Vector dimension: {dim} ({dim // 10} sensor slots × 10 params)")
+    print(f"[CMA-ES] Vector dimension: {dim} ({dim // fper} sensor slots × {fper} params)")
 
     pop_size = cma_cfg.get("population_size", None)
     cma_options = {
@@ -112,10 +122,7 @@ def run_outer_loop(
         eval_times: List[float] = []
         fidelities: List[str] = []
 
-        configs = [
-            decode(vec, mounting_slots, sensor_budget, fixed_mount_order=fixed_mount)
-            for vec in solutions
-        ]
+        configs = [decode(vec, mounting_slots, sensor_budget, **decode_kw) for vec in solutions]
 
         # Batched path: if we have a BaseEvaluator (fast/mid/slow) provided directly,
         # use its run_batch hook to evaluate the entire population.
@@ -226,7 +233,7 @@ def run_outer_loop(
                 solutions[gen_best_idx],
                 mounting_slots,
                 sensor_budget,
-                fixed_mount_order=fixed_mount,
+                **decode_kw,
             )
             best_result = gen_best_lr
 

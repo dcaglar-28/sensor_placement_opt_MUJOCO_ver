@@ -12,7 +12,7 @@ from sensor_opt.design.config import DesignConfig, build_design_config
 from sensor_opt.evaluation.results import EvaluationResult
 from sensor_opt.loss.loss import EvalMetrics, compute_loss, loss_weight_dict
 from sensor_opt.search.base import BaseSearch
-from sensor_opt.search.encoding import ConfigEncoder
+from sensor_opt.search.encoding import make_config_encoder
 
 try:
     from sklearn.gaussian_process import GaussianProcessRegressor
@@ -64,11 +64,7 @@ class HybridSearch(BaseSearch):
             records.append(_Record(design=design, result=result, score=self._scalarize(result)))
 
         model = self._make_model()
-        encoder = ConfigEncoder(
-            cfg["mounting_slots"],
-            cfg["sensor_budget"],
-            fixed_mount_order=bool(cfg.get("fixed_mount_order", False)),
-        )
+        encoder = make_config_encoder(cfg)
 
         X = np.stack([encoder.encode(r.design.sensors) for r in records], axis=0)
         y = np.array([r.score for r in records], dtype=float)

@@ -14,7 +14,9 @@ from sensor_opt.encoding.config import (
     config_vector_size,
     decode,
     encode,
+    floats_per_sensor,
     make_initial_vector,
+    merge_default_sensor_pose,
 )
 
 SLOTS = ["front", "rear", "left", "right", "top", "front-left", "front-right"]
@@ -208,3 +210,50 @@ def test_active_sensors_excludes_disabled():
     active = cfg.active_sensors()
     assert len(active) == 2
     assert all(s.is_active() for s in active)
+
+
+def test_fixed_sensor_geometry_trims_vector_length():
+    b2 = {"lidar": {"max_count": 1}, "camera": {"max_count": 1}}
+    assert floats_per_sensor(True) == 2
+    assert config_vector_size(b2, fixed_sensor_geometry=True) == 4
+    v = make_initial_vector(b2, ["a", "b"], fixed_sensor_geometry=True)
+    assert v.shape == (4,)
+    assert (v == 0).all()
+
+
+def test_decode_fixed_sensor_geometry_allocation_only():
+    six = ["m0", "m1", "m2", "m3", "m4", "m5"]
+    b6 = {
+        "lidar":  {"max_count": 2},
+        "camera": {"max_count": 2},
+        "radar":  {"max_count": 2},
+    }
+    vec = np.zeros(12, dtype=np.float64)
+    vec[0:2] = (2.0, 1.0)  # camera, active
+    # remaining slots: disabled
+    dpose = {
+        "all": {
+            "yaw_deg": 0.0,
+            "pitch_deg": 0.0,
+            "z_offset": 0.2,
+        },
+        "camera": {
+            "pitch_deg": 0.0,
+        },
+    }
+    cfg = decode(
+        vec, six, b6,
+        fixed_sensor_geometry=True,
+        fixed_mount_order=True,
+        default_sensor_pose=dpose,
+    )
+    assert cfg.sensors[0].sensor_type == "camera"
+    assert cfg.sensors[0].slot == "m0"
+    assert cfg.sensors[0].yaw_deg == 0.0
+    assert cfg.sensors[0].pitch_deg == 0.0
+    assert cfg.sensors[0].z_offset == 0.2
+    for s in cfg.sensors[1:]:
+        assert s.sensor_type == "disabled"
+
+    w = merge_default_sensor_pose("camera", "m0", dpose)
+    assert w["yaw_deg"] == 0.0 and w["pitch_deg"] == 0.0

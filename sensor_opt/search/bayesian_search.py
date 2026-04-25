@@ -11,7 +11,7 @@ from sensor_opt.design.config import DesignConfig, build_design_config
 from sensor_opt.evaluation.results import EvaluationResult
 from sensor_opt.loss.loss import EvalMetrics, compute_loss, loss_weight_dict
 from sensor_opt.search.base import BaseSearch
-from sensor_opt.search.encoding import ConfigEncoder
+from sensor_opt.search.encoding import make_config_encoder
 
 try:
     from sklearn.gaussian_process import GaussianProcessRegressor
@@ -40,11 +40,7 @@ class BayesianSearch(BaseSearch):
         rng = np.random.default_rng(seed)
         logger = self.evaluator.get("logger")
 
-        encoder = ConfigEncoder(
-            cfg["mounting_slots"],
-            cfg["sensor_budget"],
-            fixed_mount_order=bool(cfg.get("fixed_mount_order", False)),
-        )
+        encoder = make_config_encoder(cfg)
         samples: List[_EvalRecord] = [self._random_record(rng, encoder) for _ in range(init_samples)]
         model = self._make_model()
 

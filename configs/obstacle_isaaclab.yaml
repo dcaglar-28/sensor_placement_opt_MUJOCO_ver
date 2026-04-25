@@ -1,7 +1,9 @@
 # Rectangular-prism + six fixed mount points (obstacle / t_det pipeline).
 #
-# CMA-ES: six vector blocks (2+2+2 lidar/camera/radar budget) with `fixed_mount_order: true` so
-# block i always maps to `mounting_slots[i]` (type assignment to physical sites).
+# CMA-ES: six vector blocks (2+2+2 lidar/camera/radar budget) with `fixed_mount_order: true` and
+# `fixed_sensor_geometry: true` (default): only **type + on/off** per mount (2 floats each → 12-D search).
+# x/y/z/yaw/pitch/range/fov are taken from `default_sensor_pose` (forward-facing, safe boresight by default).
+# Set `fixed_sensor_geometry: false` to use the full 10-float continuous pose per mount again.
 #
 # Bridge (Isaac Sim / Lab):
 #   --bridge-mode obstacle --obstacle-layout prism_path --enable-prism-prototype \
@@ -19,6 +21,21 @@ search:
   type: cma
 
 fixed_mount_order: true
+fixed_sensor_geometry: true
+
+# Applied when `fixed_sensor_geometry: true` (merges: all → per-type → per_slot[slot name]).
+default_sensor_pose:
+  all:
+    x_offset: 0.0
+    y_offset: 0.0
+    z_offset: 0.2
+    yaw_deg: 0.0
+    pitch_deg: 0.0
+    range_fraction: 1.0
+    hfov_fraction: 1.0
+  camera:
+    yaw_deg: 0.0
+    pitch_deg: 0.0
 
 sensor_budget:
   lidar:
