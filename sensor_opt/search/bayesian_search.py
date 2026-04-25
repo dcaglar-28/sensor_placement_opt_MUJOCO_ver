@@ -40,7 +40,11 @@ class BayesianSearch(BaseSearch):
         rng = np.random.default_rng(seed)
         logger = self.evaluator.get("logger")
 
-        encoder = ConfigEncoder(cfg["mounting_slots"], cfg["sensor_budget"])
+        encoder = ConfigEncoder(
+            cfg["mounting_slots"],
+            cfg["sensor_budget"],
+            fixed_mount_order=bool(cfg.get("fixed_mount_order", False)),
+        )
         samples: List[_EvalRecord] = [self._random_record(rng, encoder) for _ in range(init_samples)]
         model = self._make_model()
 

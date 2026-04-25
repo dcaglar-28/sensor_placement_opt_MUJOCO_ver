@@ -97,7 +97,11 @@ class SensorConfig:
         return f"SensorConfig({', '.join(parts) or 'empty'}, total={len(active)} sensors)"
 
 
-def encode(config: SensorConfig, mounting_slots: List[str]) -> np.ndarray:
+def encode(
+    config: SensorConfig,
+    mounting_slots: List[str],
+    fixed_mount_order: bool = False,
+) -> np.ndarray:
     """Encode a SensorConfig into a flat float vector for CMA-ES."""
     n_slots = len(config.sensors)
     vec = np.zeros(n_slots * FLOATS_PER_SENSOR, dtype=np.float64)
@@ -106,7 +110,10 @@ def encode(config: SensorConfig, mounting_slots: List[str]) -> np.ndarray:
         base = i * FLOATS_PER_SENSOR
         vec[base + 0] = float(SENSOR_TYPE_REVERSE.get(sensor.sensor_type, 0))
         vec[base + 1] = 1.0 if sensor.is_active() else 0.0
-        slot_idx = mounting_slots.index(sensor.slot) if sensor.slot in mounting_slots else 0
+        if fixed_mount_order and i < len(mounting_slots):
+            slot_idx = i
+        else:
+            slot_idx = mounting_slots.index(sensor.slot) if sensor.slot in mounting_slots else 0
         vec[base + 2] = slot_idx / max(len(mounting_slots) - 1, 1)
         vec[base + 3] = sensor.x_offset
         vec[base + 4] = sensor.y_offset
@@ -124,6 +131,7 @@ def decode(
     mounting_slots: List[str],
     sensor_budget: dict,
     snap_discrete: bool = True,
+    fixed_mount_order: bool = False,
 ) -> SensorConfig:
     """Decode a CMA-ES float vector back into a SensorConfig."""
     n_sensors = len(vec) // FLOATS_PER_SENSOR
@@ -148,10 +156,13 @@ def decode(
         if snap_discrete and active_flag < 0.5:
             sensor_type = "disabled"
 
-        raw_slot = float(np.clip(chunk[2], 0.0, 1.0))
-        slot_idx = int(round(raw_slot * (len(mounting_slots) - 1)))
-        slot_idx = max(0, min(slot_idx, len(mounting_slots) - 1))
-        slot = mounting_slots[slot_idx]
+        if fixed_mount_order and i < len(mounting_slots):
+            slot = mounting_slots[i]
+        else:
+            raw_slot = float(np.clip(chunk[2], 0.0, 1.0))
+            slot_idx = int(round(raw_slot * (len(mounting_slots) - 1)))
+            slot_idx = max(0, min(slot_idx, len(mounting_slots) - 1))
+            slot = mounting_slots[slot_idx]
 
         x_off = float(np.clip(chunk[3], -0.5, 0.5))
         y_off = float(np.clip(chunk[4], -0.5, 0.5))

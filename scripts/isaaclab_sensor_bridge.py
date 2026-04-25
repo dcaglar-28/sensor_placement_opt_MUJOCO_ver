@@ -28,8 +28,11 @@ NOTE:
     - `collision_rate` and `mean_goal_success` from `info` if present (best-effort)
     with fallbacks to the analytic `fast_baseline_metrics(...)` if observations are not found.
 
-  The `--bridge-mode obstacle` path adds a research-style **static obstacle corridor** *best-effort* workflow:
-    - spawns 3-5 `FixedCuboid` obstacles per reset (USD) and re-randomizes positions in a corridor band
+  The `--bridge-mode obstacle` path adds a research-style **obstacle field** *best-effort* workflow:
+    - spawns 3-5 `FixedCuboid` obstacles per reset (USD) and re-randomizes positions in an axis-aligned band
+      (`--obstacle-layout corridor` = legacy [2,8]x[-2,2]; `prism_path` = path-aligned [0.5,9.5]x[-1.5,1.5] by default)
+    - optional `--enable-prism-prototype`: spawns a rectangular prism with six child mount `Xform`s and translates
+      the body along +X each substep; pair with `mount_prim_paths` in the optimizer YAML (see `configs/obstacle_isaaclab.yaml`)
     - `t_det_s_p95` (p95 detection latency) from Lidar/Depth/Points forward-sector min range vs `d_warn`
     - `collision_rate` from Isaac Lab `scene.sensors["*contact*"]` when available, else `info` fallbacks
     - `safety_success` / `mean_goal_success` when there is no contact and sensed min range stays > `d_clear`
@@ -179,6 +182,76 @@ def _set_obstacle_pose(*, path: str, x: float, y: float, z: float) -> None:
     xf.set_local_pose(translation=(float(x), float(y), float(z)))
 
 
+def _try_define_xform(path: str) -> bool:
+    """Create an empty UsdGeom.Xform at `path` if missing (for prototype prism mounts)."""
+    try:
+        import omni.usd  # type: ignore
+        from pxr import Sdf, UsdGeom  # type: ignore
+
+        stage = omni.usd.get_context().get_stage()
+        if stage is None:
+            return False
+        p = Sdf.Path(str(path))
+        if stage.GetPrimAtPath(p).IsValid():
+            return True
+        UsdGeom.Xform.Define(stage, p)
+        return bool(stage.GetPrimAtPath(p).IsValid())
+    except Exception:
+        return False
+
+
+def _try_ensure_prism_hierarchy(
+    *,
+    repo_root: str,
+    root: str,
+    env_idx: int,
+    half_sx: float = 0.5,
+    half_sy: float = 0.3,
+    half_sz: float = 0.2,
+) -> bool:
+    """
+    Best-effort: Xform /World/.../env_i/PrismBody + child mount Xforms for PRISM_MOUNT_NAMES.
+    """
+    _add_repo_to_syspath(repo_root or "")
+    try:
+        from sensor_opt.inner_loop.prism_path_scene import (  # noqa: WPS433
+            PRISM_MOUNT_NAMES,
+            prism_sensor_local_translations_m,
+        )
+    except Exception:
+        return False
+    b = f"{str(root).rstrip('/')}/env_{int(env_idx)}/PrismBody"
+    if not _try_define_xform(b):
+        return False
+    try:
+        from omni.isaac.core.prims import XFormPrim  # type: ignore
+    except Exception:
+        return False
+    tr = prism_sensor_local_translations_m(half_sx, half_sy, half_sz)
+    for name in PRISM_MOUNT_NAMES:
+        mp = f"{b}/mounts/{name}"
+        if not _try_define_xform(mp):
+            continue
+        t = tr.get(name, (0.0, 0.0, 0.0))
+        try:
+            xf = XFormPrim(str(mp))
+            xf.set_local_pose(translation=(float(t[0]), float(t[1]), float(t[2])))
+        except Exception:
+            pass
+    return True
+
+
+def _set_prism_body_world_x(*, path_prism_body: str, x: float, y: float, z: float) -> bool:
+    try:
+        from omni.isaac.core.prims import XFormPrim  # type: ignore
+
+        xf = XFormPrim(str(path_prism_body))
+        xf.set_world_pose(translation=(float(x), float(y), float(z)))
+        return True
+    except Exception:
+        return False
+
+
 def _ensure_fixed_cuboid(*, path: str, size: float) -> bool:
     """
     Best-effort static collider prim. Returns False if we cannot create it in this sim build.
@@ -214,10 +287,15 @@ def _ensure_obstacles_for_env(
     size_m: float,
     root: str,
     rng: np.random.Generator,
+    x_min: float = 2.0,
+    x_max: float = 8.0,
+    y_min: float = -2.0,
+    y_max: float = 2.0,
 ) -> list[str]:
     """
     Create (once) and place N static cuboids. Shared across all envs if you only have a single
     sim world; for multi-env rendering, you likely need per-env USD roots (set --obstacle-root).
+    Positions are sampled in axis-aligned box [x_min,x_max]x[y_min,y_max] at z=size/2.
     """
     n = int(max(1, n_obst))
     base = f"{str(root).rstrip('/')}/env_{int(env_idx)}/obstacles"
@@ -230,11 +308,11 @@ def _ensure_obstacles_for_env(
         if not ok:
             # try again next time; user may fix Isaac API availability
             continue
-    # place
+    s2 = float(size_m) * 0.5
     for i, p in enumerate(prim_paths):
-        x = float(rng.uniform(2.0, 8.0))
-        y = float(rng.uniform(-2.0, 2.0))
-        z = float(size_m) * 0.5
+        x = float(rng.uniform(float(x_min), float(x_max)))
+        y = float(rng.uniform(float(y_min), float(y_max)))
+        z = s2
         try:
             _set_obstacle_pose(path=p, x=x, y=y, z=z)
         except Exception:
@@ -328,6 +406,12 @@ class _BridgeState:
         n_obstacles: int = 4,
         obstacle_size_m: float = 0.5,
         sensor_noise_std: float = 0.0,
+        obstacle_x_min: float = 2.0,
+        obstacle_x_max: float = 8.0,
+        obstacle_y_min: float = -2.0,
+        obstacle_y_max: float = 2.0,
+        enable_prism_prototype: bool = False,
+        prism_path_root: str = "/World/bridge_prism_path",
     ):
         self.num_envs = int(num_envs)
         if self.num_envs < 1:
@@ -349,6 +433,13 @@ class _BridgeState:
         self.obstacle_root = str(obstacle_root)
         self.n_obstacles = int(max(3, min(5, int(n_obstacles))))  # clamp 3..5
         self.obstacle_size_m = float(obstacle_size_m)
+        self.obstacle_x_min = float(obstacle_x_min)
+        self.obstacle_x_max = float(obstacle_x_max)
+        self.obstacle_y_min = float(obstacle_y_min)
+        self.obstacle_y_max = float(obstacle_y_max)
+        self.enable_prism_prototype = bool(enable_prism_prototype)
+        self.prism_path_root = str(prism_path_root)
+        self._prism_proto_ensured: list[bool] = [False] * int(self.num_envs)
         # Default i.i.d. noise on range observations (meters). Overridable per /run_rollouts.
         self._default_sensor_noise = float(max(0.0, sensor_noise_std))
 
@@ -356,6 +447,24 @@ class _BridgeState:
         self._models: list[dict] = [{} for _ in range(self.num_envs)]
         self._warned_vec_reset: bool = False
         self._warned_prim: set[str] = set()
+
+    def _apply_prism_prototype_path_pose(self, env_idx: int, step_index: int) -> None:
+        """If prototype prism is enabled, move the body along +X for a predetermined path."""
+        if not self.enable_prism_prototype:
+            return
+        _add_repo_to_syspath(self.repo_root)
+        try:
+            from sensor_opt.inner_loop.prism_path_scene import (  # noqa: WPS433
+                prism_body_world_x_along_path,
+            )
+        except Exception:
+            return
+        dtu = float(self._physics_dt) if self._physics_dt is not None else float(self._sim_dt)
+        t_ep = float(self.max_steps) * dtu
+        t_s = float(int(step_index)) * dtu
+        xw = float(prism_body_world_x_along_path(t_s, t_episode_s=t_ep, x0=0.5, x1=8.0))
+        pb = f"{self.prism_path_root.rstrip('/')}/env_{int(env_idx)}/PrismBody"
+        _set_prism_body_world_x(path_prism_body=pb, x=xw, y=0.0, z=0.2)
 
     def reconfigure_sensors(self, env_idx: int, config: dict, sensor_models: dict) -> None:
         if env_idx < 0 or env_idx >= self.num_envs:
@@ -702,6 +811,15 @@ class _BridgeState:
             else:
                 obs = reset_out
             self._reapply_sensor_config(env_idx)
+            if self.enable_prism_prototype and env_idx < len(self._prism_proto_ensured):
+                if not self._prism_proto_ensured[env_idx]:
+                    ok = _try_ensure_prism_hierarchy(
+                        repo_root=self.repo_root,
+                        root=self.prism_path_root,
+                        env_idx=env_idx,
+                    )
+                    if ok:
+                        self._prism_proto_ensured[env_idx] = True
             # Randomize 3-5 obstacles *after* reset (scene stable), per project spec
             n_obst = int(erng.integers(3, 6))
             _ = _ensure_obstacles_for_env(
@@ -710,6 +828,10 @@ class _BridgeState:
                 size_m=float(self.obstacle_size_m),
                 root=str(self.obstacle_root),
                 rng=erng,
+                x_min=float(self.obstacle_x_min),
+                x_max=float(self.obstacle_x_max),
+                y_min=float(self.obstacle_y_min),
+                y_max=float(self.obstacle_y_max),
             )
             t = 0
             t_det: Optional[float] = None
@@ -718,6 +840,7 @@ class _BridgeState:
             # blind proxy: reuse legacy blind-spot heuristic to keep a comparable perception term
             ep_blind: list[float] = []
 
+            self._apply_prism_prototype_path_pose(env_idx, 0)
             g0 = gr.min_range_any_from_obs(obs, env_idx=env_idx)
             if g0 is not None:
                 g0n = _noise_range_m(float(g0), erng, sigma_m)
@@ -739,6 +862,7 @@ class _BridgeState:
                 t_det = 0.0
 
             while t < self.max_steps and bool(self.simulation_app.is_running()):
+                self._apply_prism_prototype_path_pose(env_idx, t)
                 action = self._sample_action()
                 step_out = self.env.step(action)
                 if isinstance(step_out, tuple) and len(step_out) >= 1:
@@ -975,6 +1099,55 @@ def main() -> int:
         help="Approximate cuboid size in meters (passed to omni.isaac.core.objects.FixedCuboid).",
     )
     p.add_argument(
+        "--obstacle-layout",
+        type=str,
+        default="corridor",
+        choices=["corridor", "prism_path"],
+        help=(
+            "Obstacle sample volume: `corridor` = legacy x∈[2,8] y∈[-2,2]; "
+            "`prism_path` = wider path band x∈[0.5,9.5] y∈[-1.5,1.5] (override with --obstacle-*-min/max). "
+        ),
+    )
+    p.add_argument(
+        "--obstacle-x-min",
+        type=float,
+        default=None,
+        help="Override: min world X for random obstacle positions (meters).",
+    )
+    p.add_argument(
+        "--obstacle-x-max",
+        type=float,
+        default=None,
+        help="Override: max world X for random obstacle positions (meters).",
+    )
+    p.add_argument(
+        "--obstacle-y-min",
+        type=float,
+        default=None,
+        help="Override: min world Y for random obstacle positions (meters).",
+    )
+    p.add_argument(
+        "--obstacle-y-max",
+        type=float,
+        default=None,
+        help="Override: max world Y for random obstacle positions (meters).",
+    )
+    p.add_argument(
+        "--enable-prism-prototype",
+        action="store_true",
+        default=False,
+        help=(
+            "In obstacle mode, spawn a rectangular prism at USD `.../PrismBody` with six child mount Xforms, "
+            "and translate it along +X each step (use with matching `mount_prim_paths` in the optimizer YAML). "
+        ),
+    )
+    p.add_argument(
+        "--prism-path-root",
+        type=str,
+        default="/World/bridge_prism_path",
+        help="USD parent root for the prototype prism and mounts (per-env: .../env_i/...).",
+    )
+    p.add_argument(
         "--sensor-noise-std",
         dest="sensor_noise_std",
         type=float,
@@ -1030,7 +1203,11 @@ def main() -> int:
         # - ANYmal-C navigation (ground + nav objective)
         # - CartPole (classic smoke test; used by many tutorials)
         if args.bridge_mode in ("ground", "obstacle"):
-            args.task = "Isaac-Navigation-Flat-Anymal-C-v0"
+            if bool(getattr(args, "enable_prism_prototype", False)) and str(args.bridge_mode) == "obstacle":
+                # Lighter scene: our prototype prism/USD is independent of a legged robot in the world.
+                args.task = "Isaac-Cartpole-v0"
+            else:
+                args.task = "Isaac-Navigation-Flat-Anymal-C-v0"
         else:
             args.task = "Isaac-Cartpole-v0"
     if args.num_envs is None:
@@ -1077,6 +1254,19 @@ def main() -> int:
         )
         print(f"[isaaclab_sensor_bridge] Video recording ON → {video_dir}", flush=True)
 
+    if str(getattr(args, "obstacle_layout", "corridor") or "corridor") == "prism_path":
+        ox0, ox1, oy0, oy1 = 0.5, 9.5, -1.5, 1.5
+    else:
+        ox0, ox1, oy0, oy1 = 2.0, 8.0, -2.0, 2.0
+    if getattr(args, "obstacle_x_min", None) is not None and math.isfinite(float(args.obstacle_x_min)):
+        ox0 = float(args.obstacle_x_min)
+    if getattr(args, "obstacle_x_max", None) is not None and math.isfinite(float(args.obstacle_x_max)):
+        ox1 = float(args.obstacle_x_max)
+    if getattr(args, "obstacle_y_min", None) is not None and math.isfinite(float(args.obstacle_y_min)):
+        oy0 = float(args.obstacle_y_min)
+    if getattr(args, "obstacle_y_max", None) is not None and math.isfinite(float(args.obstacle_y_max)):
+        oy1 = float(args.obstacle_y_max)
+
     state = _BridgeState(
         num_envs=int(args.num_envs),
         SensorConfig=SensorConfig,
@@ -1094,6 +1284,12 @@ def main() -> int:
         n_obstacles=int(args.n_obstacles),
         obstacle_size_m=float(args.obstacle_size),
         sensor_noise_std=sensor_noise_bridge,
+        obstacle_x_min=ox0,
+        obstacle_x_max=ox1,
+        obstacle_y_min=oy0,
+        obstacle_y_max=oy1,
+        enable_prism_prototype=bool(getattr(args, "enable_prism_prototype", False)),
+        prism_path_root=str(getattr(args, "prism_path_root", "/World/bridge_prism_path") or "/World/bridge_prism_path"),
     )
 
     httpd = ThreadingHTTPServer((args.host, int(args.port)), _HandlerFactory(state))

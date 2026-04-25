@@ -13,9 +13,19 @@ class ConfigEncoder:
 
     mounting_slots: list[str]
     sensor_budget: dict
+    fixed_mount_order: bool = False
 
     def encode(self, config: SensorConfig) -> np.ndarray:
-        return encode(config, self.mounting_slots)
+        return encode(
+            config,
+            self.mounting_slots,
+            fixed_mount_order=self.fixed_mount_order,
+        )
 
     def decode(self, vector: np.ndarray) -> SensorConfig:
-        return decode(vector, self.mounting_slots, self.sensor_budget)
+        return decode(
+            vector,
+            self.mounting_slots,
+            self.sensor_budget,
+            fixed_mount_order=self.fixed_mount_order,
+        )

@@ -82,6 +82,25 @@ def test_decode_disabled_sensors_are_disabled():
     assert all(not s.is_active() for s in cfg.sensors)
 
 
+def test_fixed_mount_order_uses_row_index_for_slot():
+    """Row i must map to mounting_slots[i] regardless of slot float in the vector."""
+    six = ["a", "b", "c", "d", "e", "f"]
+    b6 = {
+        "lidar": {"max_count": 2},
+        "camera": {"max_count": 2},
+        "radar": {"max_count": 2},
+    }
+    vec = np.zeros(6 * FLOATS_PER_SENSOR, dtype=np.float64)
+    for i in range(6):
+        base = i * FLOATS_PER_SENSOR
+        vec[base + 0] = 1.0  # lidar
+        vec[base + 1] = 1.0
+        vec[base + 2] = 0.0  # would be slot "a" in non-fixed mode, not six[i] if i > 0
+    cfg = decode(vec, six, b6, fixed_mount_order=True)
+    for i, s in enumerate(cfg.sensors):
+        assert s.slot == six[i]
+
+
 def test_decode_budget_enforcement():
     budget = {"lidar": {"max_count": 2}}
     n = 3

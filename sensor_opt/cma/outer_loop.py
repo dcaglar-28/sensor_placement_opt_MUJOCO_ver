@@ -56,6 +56,7 @@ def run_outer_loop(
 
     sensor_budget  = cfg["sensor_budget"]
     mounting_slots = cfg["mounting_slots"]
+    fixed_mount    = bool(cfg.get("fixed_mount_order", False))
     sensor_models  = cfg["sensor_models"]
     cma_cfg        = cfg["cma"]
     loss_cfg       = cfg["loss"]
@@ -99,7 +100,10 @@ def run_outer_loop(
         eval_times: List[float] = []
         fidelities: List[str] = []
 
-        configs = [decode(vec, mounting_slots, sensor_budget) for vec in solutions]
+        configs = [
+            decode(vec, mounting_slots, sensor_budget, fixed_mount_order=fixed_mount)
+            for vec in solutions
+        ]
 
         # Batched path: if we have a BaseEvaluator (fast/mid/slow) provided directly,
         # use its run_batch hook to evaluate the entire population.
@@ -206,7 +210,12 @@ def run_outer_loop(
 
         if gen_best_loss < best_loss:
             best_loss   = gen_best_loss
-            best_config = decode(solutions[gen_best_idx], mounting_slots, sensor_budget)
+            best_config = decode(
+                solutions[gen_best_idx],
+                mounting_slots,
+                sensor_budget,
+                fixed_mount_order=fixed_mount,
+            )
             best_result = gen_best_lr
 
         log_every = cfg.get("logging", {}).get("log_every_n_generations", 1)
