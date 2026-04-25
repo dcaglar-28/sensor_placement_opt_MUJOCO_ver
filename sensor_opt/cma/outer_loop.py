@@ -21,6 +21,7 @@ import numpy as np
 from sensor_opt.cma.pareto import ParetoPoint, pareto_front
 from sensor_opt.encoding.config import (
     SensorConfig,
+    config_vector_size,
     decode,
     make_initial_vector,
 )
@@ -62,7 +63,15 @@ def run_outer_loop(
     loss_mode      = str(loss_cfg.get("mode", "default"))
     inner_cfg      = cfg["inner_loop"]
 
-    x0  = make_initial_vector(sensor_budget, mounting_slots)
+    n_expected = config_vector_size(sensor_budget)
+    x0 = make_initial_vector(sensor_budget, mounting_slots)
+    if cma_cfg.get("x0") is not None:
+        x0 = np.asarray(cma_cfg["x0"], dtype=np.float64)
+        if x0.shape != (n_expected,):
+            raise ValueError(
+                f'cma["x0"] has length {x0.size}, expected {n_expected} '
+                f"(config_vector_size for current sensor_budget)."
+            )
     dim = len(x0)
     print(f"[CMA-ES] Vector dimension: {dim} ({dim // 10} sensor slots × 10 params)")
 
@@ -76,6 +85,9 @@ def run_outer_loop(
     }
     if pop_size is not None:
         cma_options["popsize"] = pop_size
+    for _opt in ("tolfunhist", "tolfunrel"):
+        if _opt in cma_cfg:
+            cma_options[_opt] = cma_cfg[_opt]
 
     es = cma.CMAEvolutionStrategy(x0, float(cma_cfg.get("sigma0", 0.3)), cma_options)
 
