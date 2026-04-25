@@ -49,6 +49,7 @@ NOTE:
 from __future__ import annotations
 
 import argparse
+import glob
 import inspect
 import json
 import math
@@ -649,7 +650,7 @@ class _BridgeState:
         from sensor_opt.inner_loop.baseline_metrics import fast_baseline_metrics  # noqa: WPS433
         from sensor_opt.inner_loop import isaaclab_ground_robot as gr  # noqa: WPS433
 
-        for _ in range(n_eps):
+        for _ep_i in range(n_eps):
             # Reset: best-effort *per env row* if the Isaac env supports it; otherwise global reset.
             # Keep torch RNG loosely tied to the request seed (best-effort determinism).
             import torch  # type: ignore
@@ -1053,8 +1054,8 @@ def main() -> int:
     p.add_argument("--port", type=int, default=8010, help="HTTP port for /reconfigure_sensors and /run_rollouts")
     p.add_argument("--max-steps", type=int, default=500, help="Per-episode cap (prevents runaway loops).")
     p.add_argument("--repo-root", type=str, default="", help="Path to the `sensor_placement_opt` git checkout (enables `import sensor_opt`).")
-    p.add_argument("--video", action="store_true", help="Record rollout videos via gymnasium RecordVideo wrapper.")
-    p.add_argument("--video_length", type=int, default=200, help="Number of frames per recorded video clip.")
+    p.add_argument("--video", action="store_true", help="Record videos during rollouts (Isaac Lab Colab technique).")
+    p.add_argument("--video_length", type=int, default=200, help="Length of the recorded video (in steps).")
     p.add_argument("--video_interval", type=int, default=1, help="Record every N episodes (1 = every episode).")
     p.add_argument(
         "--bridge-mode",
@@ -1213,6 +1214,10 @@ def main() -> int:
     if args.num_envs is None:
         args.num_envs = 1
 
+    # Match Isaac Lab play.py: --video forces camera extensions for headless rgb capture.
+    if bool(getattr(args, "video", False)) and hasattr(args, "enable_cameras"):
+        args.enable_cameras = True
+
     app_launcher = AppLauncher(args)
     simulation_app = app_launcher.app
 
@@ -1239,20 +1244,51 @@ def main() -> int:
         except Exception:
             pass
 
-    env = gym.make(args.task, cfg=env_cfg)
-    if bool(args.video):
-        from gymnasium.wrappers.record_video import RecordVideo  # noqa: WPS433 (runtime import in Isaac runtime)
+    render_mode = "rgb_array" if bool(getattr(args, "video", False)) else None
+    env = gym.make(args.task, cfg=env_cfg, render_mode=render_mode)
 
-        video_dir = os.environ.get("ISAAC_VIDEO_DIR", "/tmp/isaaclab_video")
-        os.makedirs(video_dir, exist_ok=True)
-        env = RecordVideo(
-            env,
-            video_folder=str(video_dir),
-            episode_trigger=lambda ep_id: int(ep_id) % max(1, int(args.video_interval)) == 0,
-            name_prefix=f"bridge_{args.bridge_mode}",
-            video_length=int(args.video_length),
-        )
-        print(f"[isaaclab_sensor_bridge] Video recording ON → {video_dir}", flush=True)
+    repo_root_abs = (
+        os.path.abspath(args.repo_root)
+        if (args.repo_root and str(args.repo_root).strip())
+        else os.path.abspath(".")
+    )
+    logs_root = os.path.join(repo_root_abs, "logs")
+
+    # Video recording wrapper: attempt gym (ships with Isaac Lab), then gymnasium variants.
+    # Guard usage so missing wrappers do not crash startup.
+    RecordVideo = None  # noqa: N806 (match user requested name)
+    if bool(getattr(args, "video", False)):
+        try:
+            from gym.wrappers import RecordVideo as _RV  # type: ignore
+
+            RecordVideo = _RV
+        except Exception:
+            try:
+                from gymnasium.wrappers import RecordVideo as _RV  # type: ignore
+
+                RecordVideo = _RV
+            except Exception:
+                try:
+                    from gymnasium.wrappers.record_video import RecordVideo as _RV  # type: ignore
+
+                    RecordVideo = _RV
+                except Exception:
+                    RecordVideo = None
+
+        if RecordVideo is None:
+            print("[bridge] WARNING: RecordVideo not available, --video flag ignored.", flush=True)
+            args.video = False
+        else:
+            ts = time.strftime("%Y-%m-%d_%H-%M-%S")
+            video_folder = os.path.join(logs_root, "bridge", str(args.bridge_mode), ts, "videos", "play")
+            os.makedirs(video_folder, exist_ok=True)
+            env = RecordVideo(
+                env,
+                video_folder=str(video_folder),
+                episode_trigger=lambda ep_id: int(ep_id) % max(1, int(args.video_interval)) == 0,
+                name_prefix="rl-video",
+                video_length=int(args.video_length),
+            )
 
     if str(getattr(args, "obstacle_layout", "corridor") or "corridor") == "prism_path":
         ox0, ox1, oy0, oy1 = 0.5, 9.5, -1.5, 1.5
@@ -1321,6 +1357,16 @@ def main() -> int:
             pass
         try:
             simulation_app.close()
+        except Exception:
+            pass
+        # Log latest recorded mp4 for the notebook (do not display here).
+        try:
+            vids = glob.glob(os.path.join(logs_root, "**", "videos", "**", "*.mp4"), recursive=True)
+            if vids:
+                latest = max(vids, key=os.path.getmtime)
+                print(f"[bridge] video saved: {latest}", flush=True)
+            else:
+                print(f"[isaaclab_sensor_bridge] No video found under: {logs_root}", flush=True)
         except Exception:
             pass
     return 0
