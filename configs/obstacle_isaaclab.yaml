@@ -1,24 +1,24 @@
-# Isaac Lab + obstacle-corridor style evaluation (used with `scripts/isaaclab_sensor_bridge.py --bridge-mode obstacle`).
-# Notes:
-# - On Colab, set `BRIDGE_MODE=obstacle` for the bridge and point the optimizer at this file either explicitly
-#   (`CONFIG_PATH=configs/obstacle_isaaclab.yaml`) or via the notebook default that maps `BRIDGE_MODE` → config.
-# - The Colab notebook `notebooks/sensor_opt_isaaclab_colab.ipynb` may override `inner_loop.n_episodes` and
-#   `max_steps_per_episode` in-memory for quick smoke tests; keep them aligned with the bridge’s `--max-steps`
-#   / `--sim-dt` when you run full experiments.
-# - The bridge spawns 3-5 static cuboids per reset and reports p95(t_det) + contact-based collision rate.
-# - The optimization objective (when `loss.mode: obstacle_latency`) is:
-#     Loss = alpha * p95(t_det) + beta * collision_rate
-#   with p95(t_det) normalized by `t_det_max_s` to keep terms comparable.
+# Rectangular-prism + six fixed mount points (obstacle / t_det pipeline).
 #
-# For a full Isaac Lab task, you may still need to add sensors/obstacles in your `InteractiveSceneCfg`
-# in the task repo; this repo provides a *bridge-side* best-effort USD spawner for rapid prototyping.
+# CMA-ES: six vector blocks (2+2+2 lidar/camera/radar budget) with `fixed_mount_order: true` so
+# block i always maps to `mounting_slots[i]` (type assignment to physical sites).
+#
+# Bridge (Isaac Sim / Lab):
+#   --bridge-mode obstacle --obstacle-layout prism_path --enable-prism-prototype \
+#   --prism-path-root /World/bridge_prism_path
+# This spawns a prototype prism with six child mount Xforms; obstacles sample in a path-aligned band.
+# The HTTP bridge is still the split-process path from the optimizer (see repo README / Colab notebook).
+#
+# Mount point semantics (body +X forward, +Y left, +Z up): `sensor_opt/inner_loop/prism_path_scene.py`
 
 experiment:
-  name: "obstacle_isaaclab_run"
+  name: "obstacle_isaaclab_prism_run"
   seed: 42
 
 search:
   type: cma
+
+fixed_mount_order: true
 
 sensor_budget:
   lidar:
@@ -26,16 +26,19 @@ sensor_budget:
   camera:
     max_count: 2
   radar:
-    max_count: 1
+    max_count: 2
 
 sensor_models:
   lidar:
     isaac:
-      # USD path to the sensor Xform (required for the bridge to move the prim). Use `{env_idx}` in vectorized envs, e.g.:
-      #   prim_path: "/World/envs/env_{env_idx}/Robot/your_lidar"
-      # Multiple lidars: use `prim_paths: [".../lidar0", ".../lidar1"]` (order matches active lidars) or
-      # `mount_prim_paths: { front: "...", top: "..." }` matching `SingleSensorConfig.slot`.
       prim_path: ""
+      mount_prim_paths:
+        prism_front_face_l: "/World/bridge_prism_path/env_{env_idx}/PrismBody/mounts/prism_front_face_l"
+        prism_front_face_r: "/World/bridge_prism_path/env_{env_idx}/PrismBody/mounts/prism_front_face_r"
+        prism_top_edge_l: "/World/bridge_prism_path/env_{env_idx}/PrismBody/mounts/prism_top_edge_l"
+        prism_top_edge_r: "/World/bridge_prism_path/env_{env_idx}/PrismBody/mounts/prism_top_edge_r"
+        prism_left_edge: "/World/bridge_prism_path/env_{env_idx}/PrismBody/mounts/prism_left_edge"
+        prism_right_edge: "/World/bridge_prism_path/env_{env_idx}/PrismBody/mounts/prism_right_edge"
     model_name: "Velodyne VLP-16"
     cost_usd: 4000
     range_m: 100.0
@@ -50,8 +53,14 @@ sensor_models:
     latency_ms: 20.0
   camera:
     isaac:
-      # Same as lidar, or set env `ISAAC_CAMERA_PRIM` in Colab if you prefer not to commit paths.
       prim_path: ""
+      mount_prim_paths:
+        prism_front_face_l: "/World/bridge_prism_path/env_{env_idx}/PrismBody/mounts/prism_front_face_l"
+        prism_front_face_r: "/World/bridge_prism_path/env_{env_idx}/PrismBody/mounts/prism_front_face_r"
+        prism_top_edge_l: "/World/bridge_prism_path/env_{env_idx}/PrismBody/mounts/prism_top_edge_l"
+        prism_top_edge_r: "/World/bridge_prism_path/env_{env_idx}/PrismBody/mounts/prism_top_edge_r"
+        prism_left_edge: "/World/bridge_prism_path/env_{env_idx}/PrismBody/mounts/prism_left_edge"
+        prism_right_edge: "/World/bridge_prism_path/env_{env_idx}/PrismBody/mounts/prism_right_edge"
     model_name: "Intel RealSense D435i"
     cost_usd: 200
     range_m: 10.0
@@ -64,6 +73,15 @@ sensor_models:
     memory_gb: 0.4
     latency_ms: 8.0
   radar:
+    isaac:
+      prim_path: ""
+      mount_prim_paths:
+        prism_front_face_l: "/World/bridge_prism_path/env_{env_idx}/PrismBody/mounts/prism_front_face_l"
+        prism_front_face_r: "/World/bridge_prism_path/env_{env_idx}/PrismBody/mounts/prism_front_face_r"
+        prism_top_edge_l: "/World/bridge_prism_path/env_{env_idx}/PrismBody/mounts/prism_top_edge_l"
+        prism_top_edge_r: "/World/bridge_prism_path/env_{env_idx}/PrismBody/mounts/prism_top_edge_r"
+        prism_left_edge: "/World/bridge_prism_path/env_{env_idx}/PrismBody/mounts/prism_left_edge"
+        prism_right_edge: "/World/bridge_prism_path/env_{env_idx}/PrismBody/mounts/prism_right_edge"
     model_name: "TI AWR1843BOOST"
     cost_usd: 650
     range_m: 30.0
@@ -76,15 +94,12 @@ sensor_models:
     latency_ms: 6.0
 
 mounting_slots:
-  - front
-  - rear
-  - left
-  - right
-  - top
-  - front-left
-  - front-right
-  - rear-left
-  - rear-right
+  - prism_front_face_l
+  - prism_front_face_r
+  - prism_top_edge_l
+  - prism_top_edge_r
+  - prism_left_edge
+  - prism_right_edge
 
 cma:
   sigma0: 0.3
@@ -95,27 +110,21 @@ cma:
 
 loss:
   mode: obstacle_latency
-  # Match the user's requested form with normalized p95 term:
-  #   Loss = 1.0 * (p95(t_det) / t_det_max_s) + 100.0 * collision_rate
   alpha: 1.0
   beta: 100.0
   gamma: 0.0
   max_cost_usd: 10000.0
-  # If `max_steps=500` and `sim dt≈0.02` (bridge default), episode horizon is ~10s
   t_det_max_s: 10.0
 
 inner_loop:
-  mode: "isaac_sim" # bridge-backed IsaacSimEvaluator
+  mode: "isaac_sim"
   n_episodes: 20
   max_steps_per_episode: 500
-  # Use the same `sensor_noise_std` in speed / accuracy / cost trial YAMLs for comparable noise.
   isaac_sim:
     sensor_noise_std: 0.0
 
 hardware:
   name: "colab_t4_like"
-  # Required for Isaac Sim runs. These describe the machine running the bridge,
-  # and are separate from per-sensor compute/memory/latency fields.
   gpu_cores: 2560
   unified_memory_gb: 16.0
   memory_bandwidth_gbps: 320.0

@@ -1,0 +1,112 @@
+# Legacy corridor: many named mounting slots + CMA chooses slot per sensor row.
+# (Former default before the rectangular-prism 6-site layout.)
+# See `obstacle_isaaclab.yaml` for the prism + fixed_mount_order setup.
+
+experiment:
+  name: "obstacle_isaaclab_corridor_run"
+  seed: 42
+
+search:
+  type: cma
+
+sensor_budget:
+  lidar:
+    max_count: 2
+  camera:
+    max_count: 2
+  radar:
+    max_count: 1
+
+sensor_models:
+  lidar:
+    isaac:
+      prim_path: ""
+    model_name: "Velodyne VLP-16"
+    cost_usd: 4000
+    range_m: 100.0
+    horizontal_fov_deg: 360.0
+    vertical_fov_deg: 30.0
+    beams: 16
+    points_per_second: 300000
+    mass_kg: 0.83
+    blind_spot_reduction_factor: 0.85
+    compute_tops: 8.0
+    memory_gb: 1.2
+    latency_ms: 20.0
+  camera:
+    isaac:
+      prim_path: ""
+    model_name: "Intel RealSense D435i"
+    cost_usd: 200
+    range_m: 10.0
+    horizontal_fov_deg: 87.0
+    vertical_fov_deg: 58.0
+    depth_accuracy_pct: 2.0
+    mass_kg: 0.07
+    blind_spot_reduction_factor: 0.45
+    compute_tops: 2.0
+    memory_gb: 0.4
+    latency_ms: 8.0
+  radar:
+    model_name: "TI AWR1843BOOST"
+    cost_usd: 650
+    range_m: 30.0
+    horizontal_fov_deg: 120.0
+    vertical_fov_deg: 30.0
+    mass_kg: 0.05
+    blind_spot_reduction_factor: 0.60
+    compute_tops: 1.0
+    memory_gb: 0.2
+    latency_ms: 6.0
+
+mounting_slots:
+  - front
+  - rear
+  - left
+  - right
+  - top
+  - front-left
+  - front-right
+  - rear-left
+  - rear-right
+
+cma:
+  sigma0: 0.3
+  population_size: 20
+  max_generations: 100
+  tolx: 1e-4
+  tolfun: 1e-5
+
+loss:
+  mode: obstacle_latency
+  alpha: 1.0
+  beta: 100.0
+  gamma: 0.0
+  max_cost_usd: 10000.0
+  t_det_max_s: 10.0
+
+inner_loop:
+  mode: "isaac_sim"
+  n_episodes: 20
+  max_steps_per_episode: 500
+  isaac_sim:
+    sensor_noise_std: 0.0
+
+hardware:
+  name: "colab_t4_like"
+  gpu_cores: 2560
+  unified_memory_gb: 16.0
+  memory_bandwidth_gbps: 320.0
+  compute_limit_tops: 1e9
+  memory_limit_gb: 1e9
+  latency_budget_ms: 1e9
+
+multi_fidelity:
+  enabled: false
+
+logging:
+  csv: true
+  mlflow: true
+  mlflow_tracking_uri: "mlruns"
+  log_every_n_generations: 1
+  results_dir: "results"

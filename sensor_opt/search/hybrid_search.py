@@ -64,7 +64,11 @@ class HybridSearch(BaseSearch):
             records.append(_Record(design=design, result=result, score=self._scalarize(result)))
 
         model = self._make_model()
-        encoder = ConfigEncoder(cfg["mounting_slots"], cfg["sensor_budget"])
+        encoder = ConfigEncoder(
+            cfg["mounting_slots"],
+            cfg["sensor_budget"],
+            fixed_mount_order=bool(cfg.get("fixed_mount_order", False)),
+        )
 
         X = np.stack([encoder.encode(r.design.sensors) for r in records], axis=0)
         y = np.array([r.score for r in records], dtype=float)

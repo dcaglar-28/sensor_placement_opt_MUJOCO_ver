@@ -86,7 +86,9 @@ class NSGA2Search(BaseSearch):
         pop: List[DesignConfig] = []
         for _ in range(pop_size):
             vec = rng.uniform(-1.0, 3.5, size=dim)
-            sensor_cfg = decode(vec, slots, budget)
+            sensor_cfg = decode(
+                vec, slots, budget, fixed_mount_order=bool(self.config.get("fixed_mount_order", False))
+            )
             pop.append(build_design_config(sensor_cfg, self.config))
         return pop
 
