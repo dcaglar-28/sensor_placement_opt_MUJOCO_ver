@@ -324,19 +324,28 @@ def config_vector_size(sensor_budget: dict, fixed_sensor_geometry: bool = False)
 def make_initial_vector(
     sensor_budget: dict, mounting_slots: List[str], fixed_sensor_geometry: bool = False
 ) -> np.ndarray:
-    """Create a starting vector with all sensors disabled (full: includes neutral pose hints)."""
+    """
+    CMA-ES start vector: **must not** leave all slots disabled, or the search stays at loss = 1.0.
+
+    For `fixed_sensor_geometry` (2 floats / slot: type, active), we set a diverse mix of
+    lidar / camera / radar (types 1–3) with active > 0.5 so the decode path turns sensors ON.
+    For full 10-float mode, we also enable sensors and keep neutral pose hints.
+    """
     fper = floats_per_sensor(fixed_sensor_geometry)
     n = config_vector_size(sensor_budget, fixed_sensor_geometry)
     vec = np.zeros(n, dtype=np.float64)
     n_sensors = n // fper
     for i in range(n_sensors):
         base = i * fper
-        vec[base + 0] = 0.0
-        vec[base + 1] = 0.0
         if fixed_sensor_geometry:
-            continue
-        vec[base + 2] = 0.5
-        vec[base + 5] = 0.2
-        vec[base + 8] = 1.0
-        vec[base + 9] = 1.0
+            # type_float in (1,2,3) = lidar, camera, radar; active_float high so not snapped off
+            vec[base + 0] = float(1.0 + (i % 3))  # 1.0, 2.0, 3.0 cyclically
+            vec[base + 1] = 0.85
+        else:
+            vec[base + 0] = 1.0 + float((i % 3))
+            vec[base + 1] = 0.85
+            vec[base + 2] = 0.5
+            vec[base + 5] = 0.2
+            vec[base + 8] = 1.0
+            vec[base + 9] = 1.0
     return vec

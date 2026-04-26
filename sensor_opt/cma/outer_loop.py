@@ -11,6 +11,7 @@ CMA-ES outer loop. Wraps pycma to:
 
 from __future__ import annotations
 
+import json
 import traceback
 from dataclasses import dataclass
 from typing import Callable, List, Optional
@@ -26,6 +27,7 @@ from sensor_opt.encoding.config import (
     floats_per_sensor,
     make_initial_vector,
 )
+from sensor_opt.encoding.serialize_config import sensor_config_to_dict
 from sensor_opt.evaluation.base import BaseEvaluator
 from sensor_opt.evaluation.pipeline import Evaluator
 from sensor_opt.evaluation.results import EvaluationResult
@@ -43,6 +45,28 @@ class OptimizationResult:
     converged: bool
     stop_reason: str
     run_id: str
+
+
+def _effective_loss_cfg(
+    generation: int,
+    loss_cfg: dict,
+    cma_cfg: dict,
+) -> dict:
+    nfeas = int(cma_cfg.get("feasibility_generations", 0) or 0)
+    if nfeas > 0 and generation <= nfeas:
+        return {**loss_cfg, "mode": "default", "alpha": 1.0, "beta": 0.0, "gamma": 0.0}
+    return {**loss_cfg}
+
+
+def _effective_hardware(
+    full_cfg: dict,
+    generation: int,
+    cma_cfg: dict,
+) -> dict:
+    nfeas = int(cma_cfg.get("feasibility_generations", 0) or 0)
+    if nfeas > 0 and generation <= nfeas and bool(cma_cfg.get("feasibility_ignore_hardware", True)):
+        return {}
+    return full_cfg.get("hardware", {}) or {}
 
 
 def run_outer_loop(
@@ -71,7 +95,6 @@ def run_outer_loop(
     sensor_models  = cfg["sensor_models"]
     cma_cfg        = cfg["cma"]
     loss_cfg       = cfg["loss"]
-    loss_mode      = str(loss_cfg.get("mode", "default"))
     inner_cfg      = cfg["inner_loop"]
 
     n_expected = config_vector_size(sensor_budget, fix_geometry)
@@ -87,18 +110,24 @@ def run_outer_loop(
     print(f"[CMA-ES] Vector dimension: {dim} ({dim // fper} sensor slots × {fper} params)")
 
     pop_size = cma_cfg.get("population_size", None)
+    if cma_cfg.get("use_recommended_popsize", False) or pop_size is None:
+        pop_size = max(12, 4 + int(3 * np.log(max(dim, 1))))
     cma_options = {
         "seed":    seed,
         "tolx":    cma_cfg.get("tolx", 1e-4),
-        "tolfun":  cma_cfg.get("tolfun", 1e-5),
+        "tolfun":  cma_cfg.get("tolfun", 1e-4),
         "maxiter": cma_cfg.get("max_generations", 100),
-        "verbose": -9,
+        "verbose": int(cma_cfg.get("verbose", -9)),
+        "popsize": int(pop_size),
     }
-    if pop_size is not None:
-        cma_options["popsize"] = pop_size
     for _opt in ("tolfunhist", "tolfunrel"):
         if _opt in cma_cfg:
             cma_options[_opt] = cma_cfg[_opt]
+
+    print(f"[CMA-ES] popsize={pop_size}  sigma0={float(cma_cfg.get('sigma0', 0.3)):.4f}  max_generations={cma_options['maxiter']}")
+    nfeas = int(cma_cfg.get("feasibility_generations", 0) or 0)
+    if nfeas > 0:
+        print(f"[CMA-ES] Feasibility phase: first {nfeas} gen optimize collision only (α=1, β=γ=0, hardware off).")
 
     es = cma.CMAEvolutionStrategy(x0, float(cma_cfg.get("sigma0", 0.3)), cma_options)
 
@@ -113,9 +142,28 @@ def run_outer_loop(
     noise_std  = inner_cfg.get("dummy", {}).get("noise_std", 0.05)
     n_episodes = inner_cfg.get("n_episodes", 15)
 
+    if base_evaluator is not None:
+        try:
+            c0 = decode(x0, mounting_slots, sensor_budget, **decode_kw)
+            m0 = base_evaluator.run(
+                config=c0, sensor_models=sensor_models, n_episodes=n_episodes, rng=rng
+            )
+            n_act = len([s for s in c0.sensors if s.is_active()])
+            ncc = int(round(m0.collision_rate * n_episodes))
+            print(
+                f"[CMA-ES] Initial seed: n_active={n_act} | collision_rate={m0.collision_rate:.3f} "
+                f"(~{ncc}/{n_episodes} high-coll ep.) | blind={m0.blind_spot_fraction:.3f}"
+            )
+        except Exception as e:
+            print(f"[CMA-ES] Initial seed eval skipped: {e}")
+
     while not es.stop():
         generation += 1
         solutions  = es.ask()
+        le = _effective_loss_cfg(generation, loss_cfg, cma_cfg)
+        le_mode = str(le.get("mode", "default"))
+        le_hw = _effective_hardware(cfg, generation, cma_cfg)
+        w_eff = loss_weight_dict(le)
 
         losses: List[float] = []
         loss_results: List[LossResult] = []
@@ -139,10 +187,10 @@ def run_outer_loop(
                         metrics=metrics,
                         config=config,
                         sensor_models=sensor_models,
-                        weights=loss_weight_dict(loss_cfg),
-                        max_cost_usd=loss_cfg.get("max_cost_usd", 10_000.0),
-                        hardware_constraints=cfg.get("hardware", {}),
-                        loss_mode=loss_mode,
+                        weights=w_eff,
+                        max_cost_usd=le.get("max_cost_usd", 10_000.0),
+                        hardware_constraints=le_hw,
+                        loss_mode=le_mode,
                     )
                     losses.append(lr.total)
                     loss_results.append(lr)
@@ -170,7 +218,9 @@ def run_outer_loop(
                         config=config,
                         cfg=cfg,
                         sensor_models=sensor_models,
-                        loss_cfg=loss_cfg,
+                        loss_cfg=le,
+                        loss_mode=le_mode,
+                        hardware_constraints=le_hw,
                         n_episodes=n_episodes,
                         noise_std=noise_std,
                         rng=rng,
@@ -191,10 +241,10 @@ def run_outer_loop(
                         metrics=fallback_metrics,
                         config=config,
                         sensor_models=sensor_models,
-                        weights=loss_weight_dict(loss_cfg),
-                        max_cost_usd=loss_cfg.get("max_cost_usd", 10_000.0),
-                        hardware_constraints=cfg.get("hardware", {}),
-                        loss_mode=loss_mode,
+                        weights=w_eff,
+                        max_cost_usd=le.get("max_cost_usd", 10_000.0),
+                        hardware_constraints=le_hw,
+                        loss_mode=le_mode,
                     )
                     eval_result = EvaluationResult(
                         metrics=fallback_metrics,
@@ -248,6 +298,50 @@ def run_outer_loop(
                 dominant_fidelity=_dominant_label(fidelities),
             )
             _print_progress(generation, gen_best_loss, best_loss, es.sigma, gen_best_lr)
+
+        if (
+            base_evaluator is not None
+            and generation == 1
+        ):
+            try:
+                _diag = solutions[int(np.argmin(losses))]
+                c1 = decode(_diag, mounting_slots, sensor_budget, **decode_kw)
+                m1 = base_evaluator.run(
+                    config=c1, sensor_models=sensor_models, n_episodes=n_episodes, rng=rng
+                )
+                n_col = int(round(m1.collision_rate * n_episodes))
+                na = len([s for s in c1.sensors if s.is_active()])
+                n_mount = len(mounting_slots)
+                print(
+                    f"[Diag G1] best-of-pop: n_coll~{n_col} / {n_episodes} | blind={m1.blind_spot_fraction:.3f} | "
+                    f"n_active={na} | uncovered_slots~{max(0, n_mount - na)} | oob=0 (decode bounds)"
+                )
+            except Exception as e:
+                print(f"[Diag G1] skipped: {e}")
+
+        _ci = int(cma_cfg.get("checkpoint_interval", 25) or 0)
+        if (
+            best_config is not None
+            and best_result is not None
+            and generation > 0
+            and _ci > 0
+            and generation % _ci == 0
+        ):
+            cdir = logger.run_dir / "checkpoints"
+            cdir.mkdir(exist_ok=True)
+            cpath = cdir / f"checkpoint_gen{generation:04d}.json"
+            with open(cpath, "w", encoding="utf-8") as cf:
+                json.dump(
+                    {
+                        "generation": generation,
+                        "best_loss": best_loss,
+                        "best_config": sensor_config_to_dict(best_config),
+                        "cma_sigma": float(es.sigma),
+                    },
+                    cf,
+                    indent=2,
+                )
+            print(f"[CMA-ES] checkpoint -> {cpath.name}")
 
     stop_reason = str(es.stop())
     converged   = "tolfun" in stop_reason or "tolx" in stop_reason
@@ -322,6 +416,8 @@ def _evaluate_candidate(
     cfg: dict,
     sensor_models: dict,
     loss_cfg: dict,
+    loss_mode: str,
+    hardware_constraints: dict,
     n_episodes: int,
     noise_std: float,
     rng: np.random.Generator,
@@ -350,8 +446,8 @@ def _evaluate_candidate(
         sensor_models=sensor_models,
         weights=loss_weight_dict(loss_cfg),
         max_cost_usd=loss_cfg.get("max_cost_usd", 10_000.0),
-        hardware_constraints=cfg.get("hardware", {}),
-        loss_mode=str(loss_cfg.get("mode", "default")),
+        hardware_constraints=hardware_constraints,
+        loss_mode=loss_mode,
     )
     return EvaluationResult(
         metrics=metrics,

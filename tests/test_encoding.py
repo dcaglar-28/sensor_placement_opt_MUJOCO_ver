@@ -57,13 +57,14 @@ def test_make_initial_vector_shape():
     assert vec.shape == (config_vector_size(BUDGET),)
 
 
-def test_make_initial_vector_all_disabled():
+def test_make_initial_vector_enables_sensors_by_default():
     vec = make_initial_vector(BUDGET, SLOTS)
     n = config_vector_size(BUDGET) // FLOATS_PER_SENSOR
     for i in range(n):
         base = i * FLOATS_PER_SENSOR
-        assert vec[base + 0] == 0.0
-        assert vec[base + 1] == 0.0
+        # Not all-zero: CMA-ES should start with active sensors to avoid total loss 1.0
+        assert vec[base + 1] > 0.5
+        assert 1.0 <= vec[base + 0] <= 3.0
 
 
 def test_encode_returns_correct_shape():
@@ -79,7 +80,8 @@ def test_encode_dtype_is_float64():
 
 
 def test_decode_disabled_sensors_are_disabled():
-    vec = make_initial_vector(BUDGET, SLOTS)
+    n = config_vector_size(BUDGET) // FLOATS_PER_SENSOR
+    vec = np.zeros((n * FLOATS_PER_SENSOR,), dtype=np.float64)
     cfg = decode(vec, SLOTS, BUDGET)
     assert all(not s.is_active() for s in cfg.sensors)
 
@@ -218,7 +220,8 @@ def test_fixed_sensor_geometry_trims_vector_length():
     assert config_vector_size(b2, fixed_sensor_geometry=True) == 4
     v = make_initial_vector(b2, ["a", "b"], fixed_sensor_geometry=True)
     assert v.shape == (4,)
-    assert (v == 0).all()
+    # Two slots, each [type, active] with types 1,2,3 cycled and active>0.5
+    assert v[1] > 0.5 and v[3] > 0.5
 
 
 def test_decode_fixed_sensor_geometry_allocation_only():
