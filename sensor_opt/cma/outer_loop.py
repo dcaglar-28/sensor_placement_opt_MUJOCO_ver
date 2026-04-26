@@ -85,20 +85,29 @@ def run_outer_loop(
     # `fixed_sensor_geometry` only shrinks the CMA search vector (type+active / mount); it does not
     # change `loss`, `loss_cfg`, or `hardware`—those are always applied in `compute_loss` / eval.
     fix_geometry   = bool(cfg.get("fixed_sensor_geometry", False))
-    fixed_mount    = bool(cfg.get("fixed_mount_order", False)) or fix_geometry
+    veh5 = bool((cfg.get("encoding") or {}).get("vehicle_5slot", False))
+    fixed_mount    = bool(cfg.get("fixed_mount_order", False)) or fix_geometry or veh5
+    rt = cfg.get("runtime", {})
+    if not isinstance(rt, dict):
+        rt = {}
+    max_sc = cfg.get("max_sensor_count", rt.get("max_sensor_count"))
+    if max_sc is not None:
+        max_sc = int(max_sc)
     decode_kw = {
         "fixed_mount_order": fixed_mount,
         "fixed_sensor_geometry": fix_geometry,
         "default_sensor_pose": cfg.get("default_sensor_pose", {}) or {},
+        "vehicle_5slot": veh5,
+        "max_sensor_count": max_sc,
     }
-    fper = floats_per_sensor(fix_geometry)
+    fper = floats_per_sensor(fix_geometry, vehicle_5slot=veh5)
     sensor_models  = cfg["sensor_models"]
     cma_cfg        = cfg["cma"]
     loss_cfg       = cfg["loss"]
     inner_cfg      = cfg["inner_loop"]
 
-    n_expected = config_vector_size(sensor_budget, fix_geometry)
-    x0 = make_initial_vector(sensor_budget, mounting_slots, fix_geometry)
+    n_expected = config_vector_size(sensor_budget, fix_geometry, vehicle_5slot=veh5)
+    x0 = make_initial_vector(sensor_budget, mounting_slots, fix_geometry, vehicle_5slot=veh5)
     if cma_cfg.get("x0") is not None:
         x0 = np.asarray(cma_cfg["x0"], dtype=np.float64)
         if x0.shape != (n_expected,):
@@ -181,6 +190,7 @@ def run_outer_loop(
                     sensor_models=sensor_models,
                     n_episodes=n_episodes,
                     rng=rng,
+                    generation=generation,
                 )
                 for config, metrics in zip(configs, metrics_list):
                     lr = compute_loss(
@@ -191,6 +201,8 @@ def run_outer_loop(
                         max_cost_usd=le.get("max_cost_usd", 10_000.0),
                         hardware_constraints=le_hw,
                         loss_mode=le_mode,
+                        experiment_config=cfg,
+                        loss_config=le,
                     )
                     losses.append(lr.total)
                     loss_results.append(lr)
@@ -245,6 +257,8 @@ def run_outer_loop(
                         max_cost_usd=le.get("max_cost_usd", 10_000.0),
                         hardware_constraints=le_hw,
                         loss_mode=le_mode,
+                        experiment_config=cfg,
+                        loss_config=le,
                     )
                     eval_result = EvaluationResult(
                         metrics=fallback_metrics,
@@ -448,6 +462,8 @@ def _evaluate_candidate(
         max_cost_usd=loss_cfg.get("max_cost_usd", 10_000.0),
         hardware_constraints=hardware_constraints,
         loss_mode=loss_mode,
+        experiment_config=cfg,
+        loss_config=loss_cfg,
     )
     return EvaluationResult(
         metrics=metrics,

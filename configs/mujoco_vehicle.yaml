@@ -1,0 +1,65 @@
+experiment:
+  name: "mujoco_multi_objective"
+
+encoding:
+  vehicle_5slot: true
+
+sensor_budget:
+  lidar:    { usermax: 5, max_count: 5, min_count: 0 }
+  camera:   { usermax: 5, max_count: 5, min_count: 0 }
+  radar:    { usermax: 5, max_count: 5, min_count: 0 }
+  disabled: { usermax: 5, max_count: 5, min_count: 0 }
+
+sensor_models:
+  lidar:    { cost_usd: 2000, range_m: 25, horizontal_fov_deg: 120, vertical_fov_deg: 120, latency_ms: 100 }
+  camera:   { cost_usd: 300, range_m: 15, horizontal_fov_deg: 60, vertical_fov_deg: 60, latency_ms: 33 }
+  radar:    { cost_usd: 800, range_m: 30, horizontal_fov_deg: 90, vertical_fov_deg: 90, latency_ms: 50 }
+  disabled: { cost_usd: 0, range_m: 0, horizontal_fov_deg: 0, vertical_fov_deg: 0, latency_ms: 0 }
+
+mounting_slots:
+  - top_front_edge_l
+  - top_front_edge_r
+  - front_face_center
+  - side_front_edge_l
+  - side_front_edge_r
+
+fixed_mount_order: true
+fixed_sensor_geometry: true
+
+loss:
+  mode: trial_multi_objective
+  max_cost_usd: 5000
+  max_hardware_budget_usd: 5000
+  trial_weight_overrides: null
+
+cma:
+  sigma0: 0.25
+  max_generations: 200
+  population_size: null
+  use_recommended_popsize: true
+  checkpoint_interval: 25
+  verbose: -9
+
+inner_loop:
+  mode: mujoco
+  n_episodes: 5
+  max_steps_per_episode: 2000
+  mujoco:
+    n_obstacles: 10
+    path_length_m: 20.0
+    vehicle_speed_mps: 2.0
+    timestep_s: 0.02
+    base_random_seed: 42
+    num_envs: 1
+    sensor_spec_overrides: null
+
+search:
+  type: cma
+
+logging:
+  log_every_n_generations: 1
+  results_dir: results
+  mlflow: true
+  mlflow_tracking_uri: mlruns
+
+hardware: {}

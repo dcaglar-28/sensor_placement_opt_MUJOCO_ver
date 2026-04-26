@@ -60,7 +60,38 @@ def plot_cma_generations_matplotlib(
     axes[0].legend(loc="upper right", fontsize=9)
     axes[0].grid(True, alpha=0.3)
 
-    if all(k in cols for k in ("best_collision_term", "best_blind_term", "best_cost_term")):
+    if all(k in cols for k in ("best_term_accuracy", "best_term_speed", "best_term_coverage", "best_term_cost")) and float(
+        np.max(np.abs(cols["best_term_accuracy"][order])) + np.max(np.abs(cols["best_term_speed"][order]))
+    ) > 1e-12:
+        axes[1].plot(
+            g,
+            cols["best_term_accuracy"][order],
+            "-",
+            label="accuracy terms (weighted)",
+            color="blue",
+        )
+        axes[1].plot(
+            g,
+            cols["best_term_speed"][order],
+            "-",
+            label="speed terms (weighted)",
+            color="green",
+        )
+        axes[1].plot(
+            g,
+            cols["best_term_cost"][order],
+            "-",
+            label="cost term (weighted)",
+            color="orange",
+        )
+        axes[1].plot(
+            g,
+            cols["best_term_coverage"][order],
+            "-",
+            label="coverage term (weighted)",
+            color="purple",
+        )
+    elif all(k in cols for k in ("best_collision_term", "best_blind_term", "best_cost_term")):
         axes[1].plot(
             g,
             cols["best_collision_term"][order],

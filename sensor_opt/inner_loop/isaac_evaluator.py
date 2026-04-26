@@ -61,6 +61,7 @@ class IsaacSimEvaluator(BaseEvaluator):
         sensor_models: dict,
         n_episodes: int = 15,
         rng: np.random.Generator | None = None,
+        generation: int = 0,
     ) -> EvalMetrics:
         # Keep `run()` working even when the optimizer calls single evaluations.
         return self.run_batch(
@@ -68,6 +69,7 @@ class IsaacSimEvaluator(BaseEvaluator):
             sensor_models=sensor_models,
             n_episodes=n_episodes,
             rng=rng,
+            generation=generation,
         )[0]
 
     def run_batch(
@@ -76,6 +78,7 @@ class IsaacSimEvaluator(BaseEvaluator):
         sensor_models: dict,
         n_episodes: int = 15,
         rng: np.random.Generator | None = None,
+        generation: int = 0,
     ) -> list[EvalMetrics]:
         """
         Evaluate multiple configs using parallel simulator environments.
@@ -126,6 +129,7 @@ class IsaacSimEvaluator(BaseEvaluator):
                 n_episodes=n_episodes,
                 rng=chunk_rng,
                 sensor_noise_std=self._sensor_noise_std,
+                generation=generation,
             )
 
             if not isinstance(metrics_all, list):
@@ -142,7 +146,13 @@ class IsaacSimEvaluator(BaseEvaluator):
         return out
 
 
-def _call_run_rollouts(env: object, n_episodes: int, rng: np.random.Generator, sensor_noise_std: float) -> list:
+def _call_run_rollouts(
+    env: object,
+    n_episodes: int,
+    rng: np.random.Generator,
+    sensor_noise_std: float,
+    generation: int = 0,
+) -> list:
     """
     Call env.run_rollouts, passing sensor_noise_std when supported (e.g. Colab JSON bridge).
     """
@@ -151,9 +161,17 @@ def _call_run_rollouts(env: object, n_episodes: int, rng: np.random.Generator, s
             n_episodes=n_episodes,
             rng=rng,
             sensor_noise_std=float(sensor_noise_std),
+            generation=int(generation),
         )
     except TypeError:
-        return env.run_rollouts(n_episodes=n_episodes, rng=rng)  # type: ignore[call-arg]
+        try:
+            return env.run_rollouts(  # type: ignore[call-arg]
+                n_episodes=n_episodes,
+                rng=rng,
+                generation=int(generation),
+            )
+        except TypeError:
+            return env.run_rollouts(n_episodes=n_episodes, rng=rng)  # type: ignore[call-arg]
 
 
 def evaluate(
