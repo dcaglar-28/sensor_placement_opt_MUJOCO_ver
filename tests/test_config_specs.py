@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
+
 import pytest
 
 from sensor_opt.config.specs import (
@@ -73,6 +75,34 @@ def test_min_count_limits_low_end() -> None:
 
 def test_mock_isaac_does_not_require_hardware_specs() -> None:
     validate_experiment_specs(_base_cfg(mode="mock_isaac"))
+
+
+def test_mujoco_does_not_require_hardware_specs() -> None:
+    validate_experiment_specs(_base_cfg(mode="mujoco"))
+
+
+def test_mujoco_prepare_sets_min_count_from_sim() -> None:
+    cfg = _base_cfg(mode="mujoco")
+    cfg["inner_loop"]["mujoco"] = {}
+    p = prepare_experiment_config(deepcopy(cfg))
+    for t in ("lidar", "camera"):
+        assert int(p["sensor_budget"][t]["min_count"]) == 0
+    p2 = prepare_experiment_config(
+        {
+            **deepcopy(cfg),
+            "inner_loop": {**cfg["inner_loop"], "mujoco": {"sim_min_count": {"camera": 1}}},
+        }
+    )
+    assert int(p2["sensor_budget"]["camera"]["min_count"]) == 1
+    assert int(p2["sensor_budget"]["lidar"]["min_count"]) == 0
+
+
+def test_mujoco_preserve_min_count_skips_sim() -> None:
+    cfg = _base_cfg(mode="mujoco")
+    cfg["sensor_budget"]["lidar"] = {"usermax": 2, "min_count": 1}
+    cfg["inner_loop"]["mujoco"] = {"preserve_sensor_budget_min_count": True}
+    p = prepare_experiment_config(deepcopy(cfg))
+    assert int(p["sensor_budget"]["lidar"]["min_count"]) == 1
 
 
 def test_isaac_sim_requires_machine_hardware_specs() -> None:

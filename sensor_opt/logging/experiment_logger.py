@@ -13,6 +13,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
+import mlflow
 import numpy as np
 
 from sensor_opt.encoding.serialize_config import sensor_config_to_dict
@@ -141,12 +142,8 @@ class ExperimentLogger:
             json.dump(summary, f, indent=2)
 
         if self._mlflow_run is not None:
-            try:
-                import mlflow
-                mlflow.log_dict(summary, "final_result.json")
-                mlflow.end_run()
-            except Exception:
-                pass
+            mlflow.log_dict(summary, "final_result.json")
+            mlflow.end_run()
 
     def log_paper_artifacts(
         self,
@@ -228,40 +225,28 @@ class ExperimentLogger:
         self.close()
 
     def _setup_mlflow(self, tracking_uri: str) -> None:
-        try:
-            import mlflow
-            mlflow.set_tracking_uri(tracking_uri)
-            mlflow.set_experiment(self.experiment_name)
-            self._mlflow_run = mlflow.start_run(run_name=self.run_id)
-            flat = _flatten_dict(self.run_config, max_depth=2)
-            for k, v in flat.items():
-                try:
-                    mlflow.log_param(k, v)
-                except Exception:
-                    pass
-        except ImportError:
-            print("[Logger] MLflow not installed — CSV-only logging.")
-            self._mlflow_run = None
-        except Exception as e:
-            print(f"[Logger] MLflow setup failed ({e}) — CSV-only logging.")
-            self._mlflow_run = None
+        mlflow.set_tracking_uri(tracking_uri)
+        mlflow.set_experiment(self.experiment_name)
+        self._mlflow_run = mlflow.start_run(run_name=self.run_id)
+        flat = _flatten_dict(self.run_config, max_depth=2)
+        for k, v in flat.items():
+            try:
+                mlflow.log_param(k, v)
+            except Exception:
+                pass
 
     def _log_mlflow(self, record: GenerationRecord) -> None:
-        try:
-            import mlflow
-            mlflow.log_metrics(
-                {
-                    "best_loss":     record.best_loss,
-                    "mean_loss":     record.mean_loss,
-                    "std_loss":      record.std_loss,
-                    "cma_sigma":     record.cma_sigma,
-                    "best_cost_usd": record.best_cost_usd,
-                    "best_n_active": float(record.best_n_active),
-                },
-                step=record.generation,
-            )
-        except Exception:
-            pass
+        mlflow.log_metrics(
+            {
+                "best_loss":     record.best_loss,
+                "mean_loss":     record.mean_loss,
+                "std_loss":      record.std_loss,
+                "cma_sigma":     record.cma_sigma,
+                "best_cost_usd": record.best_cost_usd,
+                "best_n_active": float(record.best_n_active),
+            },
+            step=record.generation,
+        )
 
 
 def _flatten_dict(d: dict, prefix: str = "", max_depth: int = 2, depth: int = 0) -> dict:

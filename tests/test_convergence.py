@@ -46,6 +46,48 @@ def test_load_generations_csv_minimal(tmp_path: Path):
     gen, cols = load_generations_csv(p)
     assert gen.shape == (1,)
     assert cols["best_loss"][0] == 0.5
+    assert cols["best_collision_term"][0] == 0.0
+    assert cols["cma_sigma"][0] == 0.3
+
+
+def test_plot_cma_matplotlib_smoke(tmp_path: Path):
+    pytest.importorskip("matplotlib")
+    p = tmp_path / "generations.csv"
+    rows = [
+        {
+            "run_id": "x",
+            "experiment_name": "e",
+            "generation": 1,
+            "elapsed_sec": 0.0,
+            "best_loss": 0.5,
+            "mean_loss": 0.6,
+            "std_loss": 0.1,
+            "best_collision_term": 0.1,
+            "best_blind_term": 0.2,
+            "best_cost_term": 0.2,
+            "best_cost_usd": 100.0,
+            "best_n_active": 1,
+            "best_config_summary": "x",
+            "population_size": 4,
+            "cma_sigma": 0.3,
+            "mean_eval_time_sec": 0.0,
+            "dominant_fidelity": "single",
+        }
+    ]
+    with p.open("w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+        w.writeheader()
+        w.writerows(rows)
+
+    from sensor_opt.plotting.cma_matplotlib import plot_cma_generations_matplotlib
+
+    fig = plot_cma_generations_matplotlib(p)
+    try:
+        assert len(fig.axes) in (2, 3)  # twiny adds a third Axes for CMA σ
+    finally:
+        import matplotlib.pyplot as plt
+
+        plt.close(fig)
 
 
 def test_plot_convergence_svg_smoke():

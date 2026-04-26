@@ -27,20 +27,64 @@ SENSOR_NUMERIC_FIELDS = (
 
 def prepare_experiment_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
     """
-    End-to-end config prep: catalog → `sensor_budget` normalize → validate.
+    End-to-end config prep: catalog → `sensor_budget` normalize → (MuJoCo minima)
+    → validate.
 
     Use this from `load_config` and from notebooks so `usermax` and `max_count`
     stay in sync.
+
+    For `inner_loop.mode: mujoco`, per-type `sensor_budget.*.min_count` is set from
+    the sim (`sensor_opt.inner_loop.mujoco_requirements`) unless
+    `inner_loop.mujoco.preserve_sensor_budget_min_count: true`. User **resource**
+    caps are `usermax` (or `max_count`) in `sensor_budget`, not `min_count`.
     """
     out = deepcopy(apply_sensor_catalog(cfg))
     normalize_sensor_budget_inplace(out)
+    apply_mujoco_sim_min_count_inplace(out)
     validate_experiment_specs(out)
     return out
 
 
+def apply_mujoco_sim_min_count_inplace(cfg: Dict[str, Any]) -> None:
+    """
+    When `inner_loop.mode` is `mujoco`, set `sensor_budget.<type>.min_count` from
+    `mujoco_sim_min_count()` merged with `inner_loop.mujoco.sim_min_count`.
+
+    Call **after** `normalize_sensor_budget_inplace` so `max_count` is known.
+    Skip if `inner_loop.mujoco.preserve_sensor_budget_min_count` is true.
+    """
+    il = cfg.get("inner_loop")
+    if not isinstance(il, dict) or str(il.get("mode", "")).lower() != "mujoco":
+        return
+    mj = il.get("mujoco")
+    if not isinstance(mj, dict):
+        mj = {}
+    if bool(mj.get("preserve_sensor_budget_min_count", False)):
+        return
+    from sensor_opt.inner_loop.mujoco_requirements import mujoco_sim_min_count
+
+    base = mujoco_sim_min_count()
+    ovr = mj.get("sim_min_count", {})
+    if ovr is not None and not isinstance(ovr, dict):
+        raise ValueError("inner_loop.mujoco.sim_min_count must be a mapping or omitted")
+    merged: Dict[str, int] = {**base}
+    if ovr:
+        for k, v in ovr.items():
+            merged[str(k)] = int(v)
+    budget = cfg.get("sensor_budget")
+    if not isinstance(budget, dict):
+        return
+    for t, spec in budget.items():
+        if not isinstance(spec, dict):
+            continue
+        ts = str(t)
+        lo = int(merged.get(ts, 0) or 0)
+        spec["min_count"] = lo
+
+
 def normalize_sensor_budget_inplace(cfg: Dict[str, Any]) -> None:
     """
-    In-place: copy `usermax` (max units available for that sensor type) to
+    In-place: copy `usermax` (user’s max units that can be installed) to
     `max_count` when `max_count` is omitted so the CMA-ES encoder sees a single cap.
 
     If both are set, they must be equal. The optimizer is still free to use
@@ -86,7 +130,7 @@ def validate_experiment_specs(cfg: Dict[str, Any]) -> None:
     Validate user-entered numeric specs.
 
     Hardware fields such as gpu_cores / unified_memory_gb / memory_bandwidth_gbps
-    are required only for bridge-backed Isaac Sim runs.
+    are required only when `inner_loop.mode` is the external sim bridge mode.
     """
     if not isinstance(cfg, dict):
         raise TypeError("cfg must be a dict")

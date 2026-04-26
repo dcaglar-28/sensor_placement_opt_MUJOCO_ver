@@ -1,4 +1,4 @@
-# Isaac Lab obstacle + catalog-quality sensor / compute parameters (IMX490 + AT128 + Apple Silicon)
+# Obstacle + catalog-quality sensor / compute parameters (IMX490 + AT128 + Apple Silicon)
 #
 # Sensor models (indicative numbers from public datasheets / marketing; tune costs for your program):
 # - LiDAR: Hesai AT128 — 120° × 25.4° FOV, 128 channels, >1.5M pts/s (single return), long range (see Hesai product page)

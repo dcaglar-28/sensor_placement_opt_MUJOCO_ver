@@ -1,0 +1,114 @@
+# MuJoCo inner loop with six fixed prism mounts (2 floats per block), aligned with the prism obstacle packs
+# in `configs/`; `inner_loop.mode: mujoco` (no USD / external sim).
+experiment:
+  name: "mujoco_prism_allocation"
+  seed: 42
+
+search:
+  type: cma
+
+fixed_mount_order: true
+fixed_sensor_geometry: true
+
+default_sensor_pose:
+  all:
+    x_offset: 0.0
+    y_offset: 0.0
+    z_offset: 0.0
+    yaw_deg: 0.0
+    pitch_deg: 0.0
+    range_fraction: 1.0
+    hfov_fraction: 1.0
+
+# usermax = user inventory; min_count is set automatically for mode: mujoco (see mujoco_requirements)
+sensor_budget:
+  lidar:
+    usermax: 2
+  camera:
+    usermax: 2
+  radar:
+    usermax: 2
+
+sensor_models:
+  lidar:
+    isaac: { prim_path: "" }
+    model_name: "Velodyne VLP-16"
+    cost_usd: 4000
+    range_m: 100.0
+    horizontal_fov_deg: 360.0
+    vertical_fov_deg: 30.0
+    mass_kg: 0.83
+    compute_tops: 8.0
+    memory_gb: 1.2
+    latency_ms: 20.0
+  camera:
+    isaac: { prim_path: "" }
+    model_name: "Intel RealSense D435i"
+    cost_usd: 200
+    range_m: 10.0
+    horizontal_fov_deg: 87.0
+    vertical_fov_deg: 58.0
+    mass_kg: 0.07
+    compute_tops: 2.0
+    memory_gb: 0.4
+    latency_ms: 8.0
+  radar:
+    isaac: { prim_path: "" }
+    model_name: "TI AWR1843"
+    cost_usd: 650
+    range_m: 30.0
+    horizontal_fov_deg: 120.0
+    vertical_fov_deg: 30.0
+    mass_kg: 0.05
+    compute_tops: 1.0
+    memory_gb: 0.2
+    latency_ms: 6.0
+
+mounting_slots:
+  - prism_front_face_l
+  - prism_front_face_r
+  - prism_top_edge_l
+  - prism_top_edge_r
+  - prism_left_edge
+  - prism_right_edge
+
+cma:
+  sigma0: 0.35
+  population_size: 20
+  max_generations: 60
+  tolx: 1e-4
+  tolfun: 1e-5
+
+loss:
+  mode: default
+  alpha: 0.4
+  beta: 0.4
+  gamma: 0.2
+  max_cost_usd: 10000.0
+
+inner_loop:
+  mode: "mujoco"
+  n_episodes: 12
+  max_steps_per_episode: 350
+  isaac_sim:
+    sensor_noise_std: 0.0
+  mujoco:
+    num_envs: 1
+    sensor_noise_std: 0.0
+    prism_half_extents: [0.4, 0.2, 0.12]
+    goal_z: 0.2
+    # sim_min_count: { camera: 1 }  # optional: tighten vs defaults in mujoco_requirements
+
+hardware:
+  name: "jetson_orin_like"
+  compute_limit_tops: 20.0
+  memory_limit_gb: 4.0
+  latency_budget_ms: 60.0
+
+multi_fidelity:
+  enabled: false
+
+logging:
+  csv: true
+  mlflow: false
+  results_dir: "results"

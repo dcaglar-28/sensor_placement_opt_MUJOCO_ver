@@ -1,7 +1,7 @@
 """
-Ground-robot perception helpers for Isaac Lab rollouts (best-effort, task-agnostic).
+Ground-robot perception helpers for batched “ground robot” style tensors (best-effort, task-agnostic).
 
-This module is intentionally free of `isaaclab` imports so it can be unit-tested in CI.
+This module is intentionally free of heavyweight sim imports so it can be unit-tested in CI.
 
 The core output used by the bridge is a scalar *blind spot* proxy in [0, 1]:
   blind ≈ 1 - mean(union(coverage_lidar, coverage_depth) over horizontal bins)
@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from typing import Any, Iterable, Optional
 
 import numpy as np
+import torch
 
 
 @dataclass(frozen=True)
@@ -31,29 +32,19 @@ class GroundCoverageConfig:
 def _to_numpy(x: Any) -> Optional[np.ndarray]:
     if x is None:
         return None
-    try:
-        import torch  # type: ignore
-
-        if torch.is_tensor(x):
-            return x.detach().cpu().numpy()
-    except Exception:
-        pass
+    if torch.is_tensor(x):
+        return x.detach().cpu().numpy()
     return np.asarray(x)
 
 
 def _row(x: Any, env_idx: int) -> Any:
-    """Index the first ("batch/env") dimension for common Isaac Lab tensor shapes."""
+    """Index the first ("batch/env") dimension for common batched tensor shapes."""
     if x is None:
         return None
     if isinstance(x, dict):
         return x
-    try:
-        import torch  # type: ignore
-
-        if torch.is_tensor(x):
-            return x[env_idx]
-    except Exception:
-        pass
+    if torch.is_tensor(x):
+        return x[env_idx]
     try:
         arr = np.asarray(x)
         return arr[env_idx]

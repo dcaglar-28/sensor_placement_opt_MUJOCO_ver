@@ -14,13 +14,8 @@ from __future__ import annotations
 from typing import Any
 
 import numpy as np
-
-try:
-    import jax
-    import jax.numpy as jnp
-except ImportError:  # pragma: no cover
-    jax = None
-    jnp = None
+import jax
+import jax.numpy as jnp
 
 
 def loss_from_metrics_batch(
@@ -59,10 +54,6 @@ def loss_from_metrics_batch(
 
 
 def jit_loss_from_metrics_batch():
-    """
-    Convenience: returns a jitted version if JAX is available.
-    """
-    if jax is None:
-        raise ImportError("JAX is not installed; cannot jit.")
+    """Returns a jitted version of the batched loss (requires JAX, see `requirements.txt`)."""
     return jax.jit(loss_from_metrics_batch)
 

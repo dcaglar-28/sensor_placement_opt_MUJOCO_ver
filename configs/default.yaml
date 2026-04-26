@@ -30,8 +30,8 @@ sensor_budget:
 
 sensor_models:
   lidar:
-    # Optional: used by `scripts/isaaclab_sensor_bridge.py` to move sensor prims in USD.
-    # Set `prim_path` in your actual Isaac stage (often includes `{env_idx}` for cloned envs).
+    # Optional metadata (e.g. USD prim paths) for custom sim integrations.
+    # Optional: scene prim path (when using an external sim that reads this field; often includes `{env_idx}`).
     isaac:
       prim_path: ""
     model_name: "Velodyne VLP-16"

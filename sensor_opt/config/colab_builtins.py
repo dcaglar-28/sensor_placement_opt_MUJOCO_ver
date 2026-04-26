@@ -1,6 +1,6 @@
 """
-Colab: bundled obstacle+Isaac template, validated prompts, and a safety net so
-invalid/empty user input does not break Isaac or `prepare_experiment_config`.
+Colab: bundled obstacle template, validated prompts, and a safety net so
+invalid/empty user input does not break `prepare_experiment_config`.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ RepoDict = Dict[str, Any]
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _OBSTACLE_ISAACLAB_YAML = _REPO_ROOT / "configs" / "obstacle_isaaclab.yaml"
 
-# Valid ranges and fallbacks (Isaac + sim-friendly). Used for prompts and for guards.
+# Valid ranges and fallbacks (outer-loop / sim–friendly). Used for prompts and for guards.
 ISAAC_SAFETY: Dict[str, Any] = {
     "hardware": {
         "gpu_cores": {"def": 2560, "min": 1, "max": 1_000_000},
@@ -211,7 +211,7 @@ def apply_safety_guards_experiment_config(raw: RepoDict) -> None:
     if all(budget.get(k, {}).get("usermax", 0) == 0 for k in ("lidar", "camera", "radar")):
         print(
             "[sensor_placement_opt] sensor_budget: all types have usermax=0 — "
-            "Isaac Sim needs at least one sensor. Forcing camera usermax=1, min_count=0."
+            "This mode needs at least one sensor. Forcing camera usermax=1, min_count=0."
         )
         raw.setdefault("sensor_budget", {}).setdefault("camera", {})
         raw["sensor_budget"]["camera"]["usermax"] = 1
@@ -405,18 +405,18 @@ def _default_loss_cost_for_prompt(raw: RepoDict) -> Dict[str, Any]:
 
 
 def prompt_isaac_hardware_only(raw: RepoDict) -> None:
-    """Prompt only gpu_cores, unified_memory_gb, and loss `max_cost_usd` (Colab / Isaac)."""
+    """Prompt only gpu_cores, unified_memory_gb, and loss `max_cost_usd` (Colab / external sim)."""
     h = raw.setdefault("hardware", {})
     if not isinstance(h, dict):
         raw["hardware"] = {}
         h = raw["hardware"]
     gspec = _default_int_for_prompt("HW_GPU_CORES", h, "gpu_cores", ISAAC_SAFETY["hardware"]["gpu_cores"])
-    h["gpu_cores"] = _read_int("hardware.gpu_cores", "GPU cores (Isaac / machine)", gspec)
+    h["gpu_cores"] = _read_int("hardware.gpu_cores", "GPU cores (host machine)", gspec)
     uspec = _default_float_for_prompt(
         "HW_UNIFIED_MEMORY_GB", h, "unified_memory_gb", ISAAC_SAFETY["hardware"]["unified_memory_gb"]
     )
     h["unified_memory_gb"] = _read_float(
-        "hardware.unified_memory_gb", "Unified memory (GB) (Isaac / machine)", uspec
+        "hardware.unified_memory_gb", "Unified memory (GB) (host machine)", uspec
     )
     h.setdefault("memory_bandwidth_gbps", float(ISAAC_SAFETY["hardware"]["memory_bandwidth_gbps"]["def"]))
     h.setdefault("name", str(ISAAC_SAFETY["experiment"]["name"]["def"]))
@@ -468,7 +468,7 @@ def prompt_colab_experiment_interactive(
     sspec = ISAAC_SAFETY["isaac_sim"]["sensor_noise_std"]
     isim["sensor_noise_std"] = _read_float(
         "inner_loop.isaac_sim.sensor_noise_std",
-        f"Isaac sim sensor noise std (m) — 0 = off  (suggested: {isim.get('sensor_noise_std', 0) or 0!r})",
+        f"Sim sensor noise std (m) — 0 = off  (suggested: {isim.get('sensor_noise_std', 0) or 0!r})",
         sspec,
     )
 

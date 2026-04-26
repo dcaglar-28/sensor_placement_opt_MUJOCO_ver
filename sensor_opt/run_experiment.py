@@ -16,6 +16,15 @@ import sys
 
 import yaml
 
+import jax  # noqa: F401
+import matplotlib  # noqa: F401
+import mlflow  # noqa: F401
+import pandas  # noqa: F401
+import rich  # noqa: F401
+import scipy  # noqa: F401
+import sklearn  # noqa: F401
+import torch  # noqa: F401
+
 from sensor_opt.config.specs import prepare_experiment_config
 from sensor_opt.evaluation.pipeline import Evaluator
 from sensor_opt.inner_loop.isaac_evaluator import IsaacSimEvaluator
@@ -36,7 +45,7 @@ def main():
     parser.add_argument("--config", default="configs/default.yaml",
                         help="Path to YAML config file")
     parser.add_argument("--dummy", action="store_true",
-                        help="Alias for mock Isaac evaluator (no Isaac Sim required)")
+                        help="Alias for mock inner-loop evaluator (fast analytic metrics, no physics)")
     parser.add_argument("--seed", type=int, default=None,
                         help="Random seed override")
     parser.add_argument("--no-mlflow", action="store_true",
@@ -68,19 +77,34 @@ def main():
             baseline_noise_std=float(cfg["inner_loop"].get("mock_isaac", {}).get("baseline_noise_std", 0.01)),
         )
         evaluator_fn = None
-        print("[Experiment] Using MOCK Isaac evaluator")
+        print("[Experiment] Using mock inner-loop evaluator")
     elif mode == "isaac_sim":
         base_evaluator = IsaacSimEvaluator(isaac_sim_cfg=cfg["inner_loop"].get("isaac_sim", {}))
         evaluator_fn = None
-        print("[Experiment] Using Isaac Sim evaluator")
+        print("[Experiment] Using external sim backend (custom env in config)")
+    elif mode == "mujoco":
+        from sensor_opt.inner_loop.mujoco_evaluator import MujocoSimEvaluator
+
+        mj = dict(cfg["inner_loop"].get("mujoco", {}) or {})
+        mj.setdefault(
+            "sensor_noise_std",
+            float(cfg["inner_loop"].get("isaac_sim", {}).get("sensor_noise_std", 0.0) or 0.0),
+        )
+        mj.setdefault("max_steps_per_episode", int(cfg["inner_loop"].get("max_steps_per_episode", 500)))
+        base_evaluator = MujocoSimEvaluator(mujoco_cfg=mj)
+        evaluator_fn = None
+        print("[Experiment] Using MuJoCo evaluator")
     else:
-        print(f"[Experiment] Unknown mode '{mode}'. Use 'mock_isaac' or 'isaac_sim'.")
+        print(
+            f"[Experiment] Unknown mode '{mode}'. "
+            "Set inner_loop.mode in configs/default.yaml to dummy/mujoco or the sim branch described there."
+        )
         sys.exit(1)
 
     mf_cfg = cfg.get("multi_fidelity", {})
     if mf_cfg.get("enabled", False):
         evaluator_obj = Evaluator(
-            # With dummy evaluator removed, we use MockIsaac with zero latency as
+            # Use the mock evaluator with zero latency as
             # the "fast" and "mid" stages (lower stochasticity).
             fast_eval=MockIsaacEvaluator(
                 latency_sec=0.0,

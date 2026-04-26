@@ -8,8 +8,12 @@ Obstacle / latency research mode (mode=`obstacle_latency`):
   L = α·(p95(t_det) / t_det_max_s) + β·collision_rate
   (optionally + γ·cost_penalty if you set γ>0)
 
+MuJoCo hazard-detection mode (mode=`mujoco_tri`):
+  L = α·(p95(t_det) / t_det_max_s) + β·detection_miss_rate
+      + γ·cost_penalty  (+ hardware budget penalty, same as `default`)
+
 In `default` mode, the main terms are naturally in [0, 1] (plus hardware penalty).
-In `obstacle_latency` mode, the normalized p95 term is clipped to [0, 1].
+In `obstacle_latency` and `mujoco_tri` modes, the normalized p95 term is clipped to [0, 1].
 """
 
 from __future__ import annotations
@@ -18,11 +22,7 @@ from dataclasses import dataclass
 from typing import Dict
 
 import numpy as np
-
-try:
-    import jax.numpy as jnp
-except ImportError:  # pragma: no cover - fallback for environments without JAX
-    jnp = None
+import jax.numpy as jnp
 
 from sensor_opt.encoding.config import SensorConfig
 
@@ -34,12 +34,15 @@ class EvalMetrics:
     blind_spot_fraction: float
     mean_goal_success: float
     n_episodes: int
-    # Optional obstacle / latency fields (Isaac Sim / Isaac Lab use-case)
+    # Optional obstacle / latency fields (custom sims may provide these)
     # When unset, they default to 0.0 and do not affect legacy loss modes.
     t_det_s: float = 0.0
     t_det_s_p95: float = 0.0
     episode_time_s: float = 0.0
     safety_success: float = 0.0
+    # Fraction of rollouts that ended before every obstacle was first seen in FOV+range
+    # (e.g. collision/timeout; MuJoCo inner loop).
+    detection_miss_rate: float = 0.0
 
 
 @dataclass
@@ -101,6 +104,17 @@ def compute_loss(
         cost_usd = 0.0
         cost_penalty = 0.0
         cost_term = float(gamma * cost_penalty)
+    elif loss_mode == "mujoco_tri":
+        # Speed (alpha): p95 time until last obstacle is first detected, vs horizon.
+        # Accuracy (beta): share of episodes that failed to see all obstacles before end.
+        # Cost (gamma): sensor budget, plus hardware penalty below.
+        p95n = float(xp.clip(float(getattr(metrics, "t_det_s_p95", 0.0)) / max(t_max, 1e-6), 0.0, 1.0))
+        dmr = float(xp.clip(float(getattr(metrics, "detection_miss_rate", 0.0)), 0.0, 1.0))
+        blind_term = float(alpha * p95n)
+        collision_term = float(beta * dmr)
+        cost_usd = _compute_effective_cost(config, sensor_models)
+        cost_penalty = float(xp.clip(cost_usd / max_cost_usd, 0.0, 1.0))
+        cost_term = float(gamma * cost_penalty)
     else:
         collision_term = float(alpha * xp.clip(float(metrics.collision_rate), 0.0, 1.0))
         blind_term = float(beta * xp.clip(float(metrics.blind_spot_fraction), 0.0, 1.0))
@@ -116,6 +130,9 @@ def compute_loss(
         if loss_mode == "obstacle_latency":
             # No sensors => cannot perceive => worst-case for both latency + collision terms (bounded, interpretable)
             total = float(alpha) + float(beta)
+        elif loss_mode == "mujoco_tri":
+            # Worst p95 and worst miss; $ and hardware terms stay zero
+            total = float(alpha) + float(beta)
         else:
             total = 1.0
 
@@ -129,6 +146,17 @@ def compute_loss(
             "t_det_s_p95": float(getattr(metrics, "t_det_s_p95", 0.0)),
             "safety_success": float(_clamp(getattr(metrics, "safety_success", 0.0))),
         }
+    elif loss_mode == "mujoco_tri":
+        dmr = float(_clamp(getattr(metrics, "detection_miss_rate", 0.0)))
+        p95n = float(_clamp(float(getattr(metrics, "t_det_s_p95", 0.0)) / max(t_max, 1e-6)))
+        objectives = {
+            "collision": dmr,
+            "blind_spot": p95n,
+            "cost": cost_penalty,
+            "hardware": float(_clamp(hardware_penalty_term)),
+            "t_det_s_p95": float(getattr(metrics, "t_det_s_p95", 0.0)),
+            "detection_miss_rate": dmr,
+        }
     else:
         objectives = {
             "collision": float(_clamp(metrics.collision_rate)),
@@ -137,7 +165,7 @@ def compute_loss(
             "hardware": float(_clamp(hardware_penalty_term)),
         }
 
-    total_out = float(total) if loss_mode == "obstacle_latency" else float(_clamp(total))
+    total_out = float(total) if loss_mode in ("obstacle_latency", "mujoco_tri") else float(_clamp(total))
 
     return LossResult(
         total=total_out,
@@ -153,8 +181,8 @@ def compute_loss(
 
 
 def _array_lib():
-    """Use JAX arrays when available, otherwise NumPy."""
-    return jnp if jnp is not None else np
+    """JAX numpy API for clipping / bounds in loss-side helpers."""
+    return jnp
 
 
 def _clamp(v: float, lo: float = 0.0, hi: float = 1.0) -> float:

@@ -37,7 +37,7 @@ class BaseEvaluator(ABC):
         Batched evaluation hook.
 
         Default implementation falls back to a Python loop to preserve backward
-        compatibility. Backends (including Isaac Sim) can override this to do
+        compatibility. Backends for specific simulators can override this to do
         true batching / vectorized simulation.
         """
         return [

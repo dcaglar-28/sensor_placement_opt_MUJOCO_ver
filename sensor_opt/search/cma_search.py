@@ -44,7 +44,7 @@ class CMASearch(BaseSearch):
         if evaluator_fn is None and evaluator_obj is None and base_evaluator is None:
             raise ValueError(
                 "CMASearch requires at least one of: evaluator_fn, evaluator (multi-fidelity), "
-                "or base_evaluator (Isaac/mock structured evaluator)."
+                "or base_evaluator (sim / mock structured evaluator)."
             )
 
         return run_cma_optimization(

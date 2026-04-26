@@ -1,6 +1,6 @@
 # Legacy corridor: many named mounting slots + CMA chooses slot per sensor row.
 # (Former default before the rectangular-prism 6-site layout.)
-# See `obstacle_isaaclab.yaml` for the prism + fixed_mount_order setup.
+# See the prism + `obstacle_*.yaml` packs for the fixed_mount_order setup.
 
 experiment:
   name: "obstacle_isaaclab_corridor_run"

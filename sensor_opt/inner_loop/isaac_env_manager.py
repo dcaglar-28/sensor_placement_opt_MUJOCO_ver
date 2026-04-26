@@ -1,7 +1,7 @@
 """
-Isaac Sim "env manager" interface + a concrete mock implementation.
+Environment manager protocol + a concrete mock for vectorized inner-loop tests.
 
-`IsaacSimEvaluator.run_batch()` expects an object with:
+`run_batch()` on the sim evaluator base expects an object with:
   - reconfigure_sensors(env_idx, config, sensor_models)
   - run_rollouts(n_episodes, rng) -> list[EvalMetrics]
 
@@ -9,8 +9,8 @@ This module provides:
   - `IsaacEnvManagerProtocol`: a structural typing helper (optional)
   - `MockIsaacEnvManager`: a concrete implementation you can run today
 
-To integrate real Isaac Sim, implement the same two methods but replace the
-internals with Isaac scene/sensor reconfiguration + vectorized stepping.
+To integrate a real backend, implement the same two methods and drive your
+scene/sensor setup + vectorized stepping there.
 """
 
 from __future__ import annotations
@@ -39,14 +39,14 @@ class _SlotState:
 
 class MockIsaacEnvManager:
     """
-    Concrete env manager that mimics a vectorized Isaac Sim setup.
+    Concrete env manager that mimics a vectorized multi-env setup.
 
     - Holds `num_envs` independent "slots" (like parallel environments).
     - `reconfigure_sensors` just stores the config per slot (no full reset).
     - `run_rollouts` evaluates all slots and returns one EvalMetrics per slot.
 
-    This is meant to validate ordering/chunking/batching end-to-end before you
-    swap in a real Isaac Sim implementation.
+    This validates ordering/chunking/batching end-to-end before wiring a real
+    physics or game engine backend.
     """
 
     def __init__(
@@ -72,7 +72,7 @@ class MockIsaacEnvManager:
     def run_rollouts(self, n_episodes: int, rng: np.random.Generator) -> list[EvalMetrics]:
         out: list[EvalMetrics] = []
 
-        # In a real Isaac implementation, this is where you'd step all envs
+        # In a real backend, this is where you'd step all envs
         # together each sim tick. Here we just compute per-slot metrics.
         for env_idx in range(self.num_envs):
             slot = self._slots[env_idx]

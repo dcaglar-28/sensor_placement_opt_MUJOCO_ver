@@ -112,3 +112,31 @@ def test_obstacle_latency_mode_matches_expected_weighting():
     assert abs(r.blind_term - 0.5) < 1e-6  # alpha * (5/10)
     assert abs(r.collision_term - 10.0) < 1e-6  # beta * 0.1
     assert abs(r.total - 10.5) < 1e-6
+
+
+def test_mujoco_tri_mode_matches_expected_weighting():
+    w = {"alpha": 1.0, "beta": 2.0, "gamma": 0.5, "t_det_max_s": 10.0}
+    m = EvalMetrics(
+        collision_rate=0.1,
+        blind_spot_fraction=0.0,
+        mean_goal_success=0.0,
+        n_episodes=10,
+        t_det_s=0.0,
+        t_det_s_p95=5.0,
+        episode_time_s=10.0,
+        safety_success=0.0,
+        detection_miss_rate=0.2,
+    )
+    r = compute_loss(
+        m,
+        make_config("lidar"),
+        SENSOR_MODELS,
+        w,
+        MAX_COST,
+        hardware_constraints={},
+        loss_mode="mujoco_tri",
+    )
+    assert abs(r.blind_term - 0.5) < 1e-6  # alpha * (5/10) speed
+    assert abs(r.collision_term - 0.4) < 1e-6  # beta * miss
+    assert r.cost_term > 0.0
+    assert abs(r.total - (0.5 + 0.4 + r.cost_term + r.hardware_penalty_term)) < 1e-5

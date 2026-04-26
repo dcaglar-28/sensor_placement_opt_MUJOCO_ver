@@ -1,7 +1,7 @@
 """
 sensor_opt/inner_loop/isaac_evaluator.py
 
-Isaac Sim inner-loop stub. Implement Phase 1 here.
+Generic batched inner-loop evaluator for an external simulator `env`.
 Public interface matches the inner-loop `evaluate()` shape used by the repo.
 """
 
@@ -18,8 +18,8 @@ def _chunked(seq: list, chunk_size: int):
     """
     Yield (start_index, chunk_list) pairs.
 
-    Kept here (instead of a shared utils module) so the Isaac integration can be
-    copied into an Isaac Sim project without extra dependencies.
+    Kept here (instead of a shared utils module) so integration code can be copied
+    alongside a downstream project without extra dependencies.
     """
     if chunk_size <= 0:
         raise ValueError("chunk_size must be >= 1")
@@ -29,7 +29,7 @@ def _chunked(seq: list, chunk_size: int):
 
 class IsaacSimEvaluator(BaseEvaluator):
     """
-    Isaac Sim integration layer placeholder.
+    Batched evaluator that delegates to a user-provided `env` object.
 
     Expected inputs:
       - config: SensorConfig with sensor type, slot, 3D position offsets, orientation,
@@ -44,7 +44,7 @@ class IsaacSimEvaluator(BaseEvaluator):
 
     def __init__(self, isaac_sim_cfg: dict | None = None):
         self.isaac_sim_cfg = isaac_sim_cfg or {}
-        # Expected to be provided by the user’s Isaac-side integration.
+        # Expected to be provided by the user’s simulator integration.
         # Must support:
         #   - reconfigure_sensors(env_idx, config, sensor_models)
         #   - run_rollouts(n_episodes, rng, **optional kwargs) -> list[EvalMetrics] (len == num_envs)
@@ -78,12 +78,12 @@ class IsaacSimEvaluator(BaseEvaluator):
         rng: np.random.Generator | None = None,
     ) -> list[EvalMetrics]:
         """
-        Evaluate multiple configs using parallel Isaac Sim environments.
+        Evaluate multiple configs using parallel simulator environments.
 
         Mechanism:
         - Process candidates in chunks of size `self.num_envs`.
         - For each chunk, reconfigure sensors for env slots [0..k-1] only.
-        - Run rollouts for all envs simultaneously (Isaac-side vectorized stepping).
+        - Run rollouts for all envs simultaneously (sim-side vectorized stepping when available).
         - Collect metrics for the active env slots and append them in input order.
 
         Ordering:
@@ -101,14 +101,14 @@ class IsaacSimEvaluator(BaseEvaluator):
 
         if self.env is None:
             raise NotImplementedError(
-                "IsaacSimEvaluator requires an Isaac environment instance. "
+                "A simulator `env` instance is required. "
                 "Provide it via isaac_sim_cfg={'env': <your_env>, 'num_envs': N}."
             )
 
         out: list[EvalMetrics] = []
 
         # Derive per-chunk RNGs deterministically from the provided generator.
-        # This avoids accidental dependence on internal Isaac stepping order.
+        # This avoids accidental dependence on internal stepping order in the `env` backend.
         for _, chunk in _chunked(list(configs), self.num_envs):
             k = len(chunk)
 
@@ -117,7 +117,7 @@ class IsaacSimEvaluator(BaseEvaluator):
                 self.env.reconfigure_sensors(env_idx, cfg, sensor_models)
 
             # (b) Run rollouts for all environments simultaneously.
-            # Isaac-side should do vectorized stepping (minimize Python loops).
+            # The backend should do vectorized stepping when possible (minimize Python loops).
             # We pass a derived RNG for chunk-level determinism.
             chunk_seed = int(rng.integers(0, np.iinfo(np.int32).max))
             chunk_rng = np.random.default_rng(chunk_seed)

@@ -1,7 +1,7 @@
 """
-Analytic baseline metrics used by mock evaluators / mock Isaac env manager.
+Analytic baseline metrics used by mock evaluators / mock environment manager.
 
-This is intentionally pure-Python + NumPy so it can run without Isaac Sim.
+This is intentionally pure-Python + NumPy so it can run without a physics engine.
 """
 
 from __future__ import annotations
@@ -50,7 +50,7 @@ def fast_baseline_metrics(
 ) -> EvalMetrics:
     """
     Deterministic-ish (seeded) heuristic that returns EvalMetrics.
-    Used as a stand-in for the Isaac inner loop.
+    Used as a stand-in for a physics-based inner loop.
     """
     active = config.active_sensors()
     if not active:

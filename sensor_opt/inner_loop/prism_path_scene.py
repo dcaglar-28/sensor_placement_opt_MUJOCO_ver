@@ -4,7 +4,7 @@ Prism + path layout for the rectangular-prism sensor-placement testbed.
 Body frame: +X = forward (front face), +Y = left, +Z = up. The prism is axis-aligned
 with half-extents (sx, sy, sz) in meters (sx = half length along +X, etc.).
 
-The six mount points (named consistently with `configs/obstacle_isaaclab.yaml`):
+The six mount points (same naming as the obstacle+prism YAML packs under `configs/`):
 
 - Two on the *front* face (+X) near the face center, split **left / right** along Y
   (avoids a duplicate single centroid).
@@ -21,7 +21,7 @@ from typing import List, Optional
 
 import numpy as np
 
-# Stable keys: order matches `mounting_slots` in obstacle_isaaclab (fixed_mount_order)
+# Stable keys: order matches `mounting_slots` in the prism obstacle configs (fixed_mount_order)
 PRISM_MOUNT_NAMES: List[str] = [
     "prism_front_face_l",  # front face, +Y side of center
     "prism_front_face_r",  # front face, -Y side of center

@@ -6,7 +6,7 @@
 main          ← stable, always green (CI passes)
   └─ dev      ← integration branch; PRs merge here first
        ├─ phase/0-scaffold      (done)
-       ├─ phase/1-isaac-sim     (next)
+       ├─ phase/1-inner-loop    (MuJoCo / custom sim)
        ├─ phase/2-rl-inner-loop
        └─ feat/<short-name>     (any standalone feature)
 \```
@@ -31,7 +31,7 @@ types: feat | fix | test | refactor | docs | chore
 scope: encoding | loss | cma | inner_loop | logging | config | ci
 
 Examples:
-  feat(inner_loop): add Isaac Sim evaluator stub
+  feat(inner_loop): extend inner-loop evaluator
   fix(encoding): clamp yaw to [-180, 180] before normalising
   test(loss): add edge case for zero-weight gamma
   chore(ci): add GitHub Actions pytest workflow

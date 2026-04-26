@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from typing import Dict, List
 
 import numpy as np
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import Matern, WhiteKernel
 
 from sensor_opt.cma.outer_loop import OptimizationResult, run_cma_optimization
 from sensor_opt.cma.pareto import pareto_front
@@ -13,14 +15,6 @@ from sensor_opt.evaluation.results import EvaluationResult
 from sensor_opt.loss.loss import EvalMetrics, compute_loss, loss_weight_dict
 from sensor_opt.search.base import BaseSearch
 from sensor_opt.search.encoding import make_config_encoder
-
-try:
-    from sklearn.gaussian_process import GaussianProcessRegressor
-    from sklearn.gaussian_process.kernels import Matern, WhiteKernel
-except Exception:  # pragma: no cover
-    GaussianProcessRegressor = None
-    Matern = None
-    WhiteKernel = None
 
 
 @dataclass
@@ -96,8 +90,6 @@ class HybridSearch(BaseSearch):
         )
 
     def _make_model(self):
-        if GaussianProcessRegressor is None:
-            raise ImportError("scikit-learn is required for HybridSearch.")
         kernel = Matern(nu=2.5) + WhiteKernel(noise_level=1e-5)
         return GaussianProcessRegressor(kernel=kernel, normalize_y=True, random_state=0)
 

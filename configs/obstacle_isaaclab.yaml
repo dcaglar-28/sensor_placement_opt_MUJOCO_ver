@@ -5,11 +5,10 @@
 # x/y/z/yaw/pitch/range/fov are taken from `default_sensor_pose` (forward-facing, safe boresight by default).
 # Set `fixed_sensor_geometry: false` to use the full 10-float continuous pose per mount again.
 #
-# Bridge (Isaac Sim / Lab):
-#   --bridge-mode obstacle --obstacle-layout prism_path --enable-prism-prototype \
-#   --prism-path-root /World/bridge_prism_path
-# This spawns a prototype prism with six child mount Xforms; obstacles sample in a path-aligned band.
-# The HTTP bridge is still the split-process path from the optimizer (see repo README / Colab notebook).
+# Custom sim: provide an `env` with `reconfigure_sensors` / `run_rollouts` that updates scene
+# assets under `sensor_models.*.isaac.*` and returns `EvalMetrics` including `t_det_s_p95` when
+# using `loss.mode: obstacle_latency`. Mount paths below follow
+# `sensor_opt/inner_loop/prism_path_scene.py` conventions.
 #
 # Mount point semantics (body +X forward, +Y left, +Z up): `sensor_opt/inner_loop/prism_path_scene.py`
 

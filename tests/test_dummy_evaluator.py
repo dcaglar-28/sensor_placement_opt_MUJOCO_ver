@@ -1,6 +1,6 @@
 """tests/test_dummy_evaluator.py
 
-Legacy name: this now tests the self-contained MockIsaac evaluator baseline.
+Tests the self-contained mock-evaluator baseline.
 """
 
 import numpy as np

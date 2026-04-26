@@ -35,10 +35,18 @@ def load_generations_csv(path: PathLike) -> Tuple[np.ndarray, dict[str, np.ndarr
 
     numeric_keys = [
         "generation",
+        "elapsed_sec",
         "best_loss",
         "mean_loss",
         "std_loss",
         "cma_sigma",
+        "best_collision_term",
+        "best_blind_term",
+        "best_cost_term",
+        "best_cost_usd",
+        "best_n_active",
+        "population_size",
+        "mean_eval_time_sec",
     ]
     out: dict[str, np.ndarray] = {}
     for k in numeric_keys:

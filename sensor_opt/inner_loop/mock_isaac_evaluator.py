@@ -1,5 +1,5 @@
 """
-Mock high-fidelity evaluator that mimics slow Isaac Sim behavior.
+Mock high-fidelity evaluator that mimics slow physics-style rollouts (latency + noise).
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from sensor_opt.loss.loss import EvalMetrics
 
 
 class MockIsaacEvaluator(BaseEvaluator):
-    """Slow, stochastic evaluator placeholder for Isaac Sim."""
+    """Slow, stochastic evaluator placeholder for a heavy sim."""
 
     def __init__(
         self,
@@ -67,7 +67,7 @@ class MockIsaacEvaluator(BaseEvaluator):
         rng: np.random.Generator | None = None,
     ) -> list[EvalMetrics]:
         # Mock "batched" mode: still sequential, but matches the interface that
-        # a real Isaac Sim backend would implement (e.g., vectorized envs).
+        # a real vectorized backend would implement.
         return [
             self.run(config=c, sensor_models=sensor_models, n_episodes=n_episodes, rng=rng)
             for c in configs
@@ -86,7 +86,7 @@ def evaluate(
     """
     Backwards-compatible function API (mirrors the old dummy evaluator shape).
     `noise_std` maps to the baseline analytic noise; stochastic_std adds extra
-    Isaac-like variability.
+    extra high-fidelity-like variability.
     """
     evaluator = MockIsaacEvaluator(
         latency_sec=latency_sec,
