@@ -43,6 +43,13 @@ class EvalMetrics:
     # Fraction of rollouts that ended before every obstacle was first seen in FOV+range
     # (e.g. collision/timeout; MuJoCo inner loop).
     detection_miss_rate: float = 0.0
+    # MuJoCo vehicle kinematic / trial logging (optional)
+    coverage_fraction: float = 0.0
+    n_detected: float = 0.0
+    n_obstacles: float = 0.0
+    mean_detection_distance_m: float = 0.0
+    first_detection_time_mean: float = 0.0
+    per_slot_first_hits: dict | None = None
 
 
 @dataclass
@@ -72,6 +79,9 @@ def loss_weight_dict(loss_cfg: dict) -> dict:
     }
     if "t_det_max_s" in loss_cfg and loss_cfg.get("t_det_max_s") is not None:
         w["t_det_max_s"] = float(loss_cfg["t_det_max_s"])
+    ttw = loss_cfg.get("trial_weight_overrides")
+    if ttw is not None and isinstance(ttw, dict):
+        w["trial_weights"] = ttw
     return w
 
 
@@ -83,7 +93,37 @@ def compute_loss(
     max_cost_usd: float = 10_000.0,
     hardware_constraints: dict | None = None,
     loss_mode: str = "default",
+    experiment_config: dict | None = None,
+    loss_config: dict | None = None,
 ) -> LossResult:
+    if loss_mode in ("trial_accuracy", "trial_speed", "trial_multi_objective"):
+        from sensor_opt.objectives.trial_objectives import compute_trial_loss
+        from sensor_opt.simulation.sensor_specs import get_sensor_specs
+
+        trial_type = "accuracy" if loss_mode == "trial_accuracy" else (
+            "speed" if loss_mode == "trial_speed" else "multi_objective"
+        )
+        tw = (weights or {}).get("trial_weights")
+        if tw is None and loss_config and isinstance(loss_config.get("trial_weight_overrides"), dict):
+            tw = loss_config.get("trial_weight_overrides")
+        if tw is not None and not isinstance(tw, dict):
+            tw = None
+        max_hw = float(max_cost_usd)
+        if loss_config and loss_config.get("max_hardware_budget_usd") is not None:
+            max_hw = float(loss_config["max_hardware_budget_usd"])
+        elif experiment_config and experiment_config.get("max_hardware_budget_usd") is not None:
+            max_hw = float(experiment_config["max_hardware_budget_usd"])
+        sspec = get_sensor_specs(experiment_config)
+        return compute_trial_loss(
+            trial_type=trial_type,
+            metrics=metrics,
+            config=config,
+            sensor_models=sensor_models,
+            trial_weights=tw,
+            max_hardware_budget_usd=max_hw,
+            sensor_specs=sspec,
+        )
+
     xp = _array_lib()
 
     alpha = weights["alpha"]

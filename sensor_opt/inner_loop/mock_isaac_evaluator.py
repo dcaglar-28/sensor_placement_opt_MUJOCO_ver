@@ -65,7 +65,9 @@ class MockIsaacEvaluator(BaseEvaluator):
         sensor_models: dict,
         n_episodes: int = 15,
         rng: np.random.Generator | None = None,
+        generation: int = 0,
     ) -> list[EvalMetrics]:
+        _ = generation
         # Mock "batched" mode: still sequential, but matches the interface that
         # a real vectorized backend would implement.
         return [

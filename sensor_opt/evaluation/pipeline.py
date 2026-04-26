@@ -52,7 +52,7 @@ class Evaluator:
         )
 
         if fast.collision_rate > self.fast_collision_threshold:
-            return self._finalize_result(fast, "fast_reject", design, time.perf_counter() - start)
+            return self._finalize_result(fast, "fast_reject", design, time.perf_counter() - start, cfg)
 
         mid = self.mid_eval.run(
             config=config,
@@ -69,7 +69,7 @@ class Evaluator:
             rng=rng,
         ) if promising else mid
         fidelity = "slow" if promising else "mid"
-        return self._finalize_result(final_metrics, fidelity, design, time.perf_counter() - start)
+        return self._finalize_result(final_metrics, fidelity, design, time.perf_counter() - start, cfg)
 
     def _finalize_result(
         self,
@@ -77,6 +77,7 @@ class Evaluator:
         fidelity: str,
         design: DesignConfig,
         elapsed_sec: float,
+        run_cfg: Optional[dict] = None,
     ) -> EvaluationResult:
         loss = compute_loss(
             metrics=metrics,
@@ -90,6 +91,8 @@ class Evaluator:
                 "latency_budget_ms": design.hardware.latency_budget_ms,
             },
             loss_mode=self.loss_mode,
+            experiment_config=run_cfg,
+            loss_config=(run_cfg or {}).get("loss", {}) if run_cfg else None,
         )
         return EvaluationResult(
             metrics=metrics,

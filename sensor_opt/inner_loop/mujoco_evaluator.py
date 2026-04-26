@@ -19,6 +19,7 @@ class MujocoSimEvaluator(IsaacSimEvaluator):
 
     def __init__(self, mujoco_cfg: dict | None = None) -> None:
         m = dict(mujoco_cfg or {})
+        exp_cfg = m.pop("experiment_config", None)
         env = m.pop("env", None)
         num_envs = int(m.pop("num_envs", 1))
         sn = float(m.pop("sensor_noise_std", 0.0) or 0.0)
@@ -32,4 +33,6 @@ class MujocoSimEvaluator(IsaacSimEvaluator):
             )
         else:
             num_envs = int(getattr(env, "num_envs", num_envs))
+        if exp_cfg is not None and hasattr(env, "set_experiment_config"):
+            env.set_experiment_config(exp_cfg)
         super().__init__(isaac_sim_cfg={"env": env, "num_envs": num_envs, "sensor_noise_std": sn})

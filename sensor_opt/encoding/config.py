@@ -45,6 +45,7 @@ SENSOR_TYPE_REVERSE = {v: k for k, v in SENSOR_TYPE_MAP.items()}
 FLOATS_PER_SENSOR = 10  # full layout; use `floats_per_sensor(fixed_sensor_geometry=False)` in new code
 FLOATS_PER_SENSOR_FULL = 10
 FLOATS_PER_SENSOR_ALLOC = 2
+FLOATS_PER_SENSOR_VEHICLE5 = 1  # [0,1] bucketed type per fixed slot; no pose offsets
 
 PARAM_BOUNDS = {
     "type_float":       (0.0,   3.0),
@@ -70,9 +71,31 @@ _POSE_KEYS = (
 )
 
 
-def floats_per_sensor(fixed_sensor_geometry: bool) -> int:
-    """2 when only type+active are optimized; 10 for the full continuous layout."""
+def floats_per_sensor(
+    fixed_sensor_geometry: bool,
+    vehicle_5slot: bool = False,
+) -> int:
+    """1 when 5 fixed slots / [0,1] type genes; 2 for type+active; 10 for full layout."""
+    if vehicle_5slot:
+        return FLOATS_PER_SENSOR_VEHICLE5
     return FLOATS_PER_SENSOR_ALLOC if fixed_sensor_geometry else FLOATS_PER_SENSOR_FULL
+
+
+def _gene_to_type_01(x: float) -> str:
+    """[0,0.25) disabled, [0.25,0.5) camera, [0.5,0.75) radar, [0.75,1] lidar."""
+    c = float(np.clip(x, 0.0, 1.0))
+    if c < 0.25:
+        return "disabled"
+    if c < 0.5:
+        return "camera"
+    if c < 0.75:
+        return "radar"
+    return "lidar"
+
+
+def _type_to_gene_01(sensor_type: str) -> float:
+    mid = {"disabled": 0.125, "camera": 0.375, "radar": 0.625, "lidar": 0.875}
+    return float(mid.get(sensor_type, 0.125))
 
 
 def merge_default_sensor_pose(
@@ -199,9 +222,17 @@ def encode(
     mounting_slots: List[str],
     fixed_mount_order: bool = False,
     fixed_sensor_geometry: bool = False,
+    vehicle_5slot: bool = False,
 ) -> np.ndarray:
     """Encode a SensorConfig into a flat float vector for CMA-ES (or 2-dim / slot in allocation mode)."""
-    fper = floats_per_sensor(fixed_sensor_geometry)
+    fper = floats_per_sensor(fixed_sensor_geometry, vehicle_5slot=vehicle_5slot)
+    if vehicle_5slot:
+        v = np.zeros(5, dtype=np.float64)
+        for i, slot in enumerate(mounting_slots):
+            s = next((x for x in config.sensors if x.slot == slot), None)
+            st = s.sensor_type if s is not None else "disabled"
+            v[i] = _type_to_gene_01(st)
+        return v
     n_slots = len(config.sensors)
     vec = np.zeros(n_slots * fper, dtype=np.float64)
 
@@ -227,6 +258,43 @@ def encode(
     return vec
 
 
+def _apply_max_sensor_count(config: SensorConfig, mounting_slots: List[str], max_n: Optional[int]) -> SensorConfig:
+    if max_n is None or max_n < 0:
+        return config
+    act = [s for s in config.sensors if s.is_active()]
+    if len(act) <= max_n:
+        return config
+    # Disable from the end of the fixed mount list first
+    to_disable = len(act) - max_n
+    disabled_slots = set()
+    for slot in reversed(mounting_slots):
+        if to_disable <= 0:
+            break
+        s = next((x for x in config.sensors if x.slot == slot and x.is_active()), None)
+        if s is not None:
+            disabled_slots.add(slot)
+            to_disable -= 1
+    new_s: List[SingleSensorConfig] = []
+    for s in config.sensors:
+        if s.slot in disabled_slots:
+            new_s.append(
+                SingleSensorConfig(
+                    sensor_type="disabled",
+                    slot=s.slot,
+                    x_offset=0.0,
+                    y_offset=0.0,
+                    z_offset=0.2,
+                    yaw_deg=0.0,
+                    pitch_deg=0.0,
+                    range_fraction=1.0,
+                    hfov_fraction=1.0,
+                )
+            )
+        else:
+            new_s.append(s)
+    return SensorConfig(sensors=new_s)
+
+
 def decode(
     vec: np.ndarray,
     mounting_slots: List[str],
@@ -235,10 +303,44 @@ def decode(
     fixed_mount_order: bool = False,
     fixed_sensor_geometry: bool = False,
     default_sensor_pose: Optional[Dict[str, Any]] = None,
+    vehicle_5slot: bool = False,
+    max_sensor_count: Optional[int] = None,
 ) -> SensorConfig:
     """Decode a CMA-ES float vector back into a SensorConfig."""
-    fper = floats_per_sensor(fixed_sensor_geometry)
-    use_fixed_mount = bool(fixed_mount_order or fixed_sensor_geometry)
+    fper = floats_per_sensor(fixed_sensor_geometry, vehicle_5slot=vehicle_5slot)
+    use_fixed_mount = bool(fixed_mount_order or fixed_sensor_geometry or vehicle_5slot)
+    if vehicle_5slot and len(mounting_slots) != 5:
+        raise ValueError("vehicle_5slot requires exactly 5 mounting_slots")
+    if vehicle_5slot and int(vec.size) != 5:
+        raise ValueError(f"vehicle_5slot requires vector length 5, got {vec.size}")
+    if vehicle_5slot:
+        sensors: List[SingleSensorConfig] = []
+        type_counts: Dict[str, int] = {}
+        for i, slot in enumerate(mounting_slots):
+            g = float(np.clip(vec[i], 0.0, 1.0))
+            sensor_type = _gene_to_type_01(g)
+            if sensor_type != "disabled":
+                max_allowed = int(sensor_budget.get(sensor_type, {}).get("max_count", 0) or 0)
+                if type_counts.get(sensor_type, 0) >= max_allowed:
+                    sensor_type = "disabled"
+            if sensor_type != "disabled":
+                type_counts[sensor_type] = type_counts.get(sensor_type, 0) + 1
+            pose = merge_default_sensor_pose(sensor_type, slot, default_sensor_pose)
+            sensors.append(
+                SingleSensorConfig(
+                    sensor_type=sensor_type,
+                    slot=slot,
+                    x_offset=0.0,
+                    y_offset=0.0,
+                    z_offset=float(pose["z_offset"]),
+                    yaw_deg=0.0,
+                    pitch_deg=0.0,
+                    range_fraction=1.0,
+                    hfov_fraction=1.0,
+                )
+            )
+        cfg = SensorConfig(sensors=sensors)
+        return _apply_max_sensor_count(cfg, mounting_slots, max_sensor_count)
     if int(vec.size) % fper != 0:
         raise ValueError(
             f"vector length {vec.size} is not a multiple of {fper} floats per slot"
@@ -315,14 +417,21 @@ def decode(
     return SensorConfig(sensors=sensors)
 
 
-def config_vector_size(sensor_budget: dict, fixed_sensor_geometry: bool = False) -> int:
+def config_vector_size(
+    sensor_budget: dict, fixed_sensor_geometry: bool = False, vehicle_5slot: bool = False
+) -> int:
     """Return the total CMA-ES vector length for a given sensor budget."""
+    if vehicle_5slot:
+        return 5
     total_slots = sum(v.get("max_count", 0) for v in sensor_budget.values())
-    return total_slots * floats_per_sensor(fixed_sensor_geometry)
+    return total_slots * floats_per_sensor(fixed_sensor_geometry, vehicle_5slot=vehicle_5slot)
 
 
 def make_initial_vector(
-    sensor_budget: dict, mounting_slots: List[str], fixed_sensor_geometry: bool = False
+    sensor_budget: dict,
+    mounting_slots: List[str],
+    fixed_sensor_geometry: bool = False,
+    vehicle_5slot: bool = False,
 ) -> np.ndarray:
     """
     CMA-ES start vector: **must not** leave all slots disabled, or the search stays at loss = 1.0.
@@ -331,13 +440,15 @@ def make_initial_vector(
     lidar / camera / radar (types 1–3) with active > 0.5 so the decode path turns sensors ON.
     For full 10-float mode, we also enable sensors and keep neutral pose hints.
     """
-    fper = floats_per_sensor(fixed_sensor_geometry)
-    n = config_vector_size(sensor_budget, fixed_sensor_geometry)
+    fper = floats_per_sensor(fixed_sensor_geometry, vehicle_5slot=vehicle_5slot)
+    n = config_vector_size(sensor_budget, fixed_sensor_geometry, vehicle_5slot=vehicle_5slot)
     vec = np.zeros(n, dtype=np.float64)
     n_sensors = n // fper
     for i in range(n_sensors):
         base = i * fper
-        if fixed_sensor_geometry:
+        if vehicle_5slot:
+            vec[base + 0] = _type_to_gene_01(["camera", "radar", "lidar", "radar", "camera"][i % 5])
+        elif fixed_sensor_geometry:
             # type_float in (1,2,3) = lidar, camera, radar; active_float high so not snapped off
             vec[base + 0] = float(1.0 + (i % 3))  # 1.0, 2.0, 3.0 cyclically
             vec[base + 1] = 0.85

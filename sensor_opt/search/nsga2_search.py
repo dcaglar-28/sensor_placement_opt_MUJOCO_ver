@@ -136,6 +136,8 @@ class NSGA2Search(BaseSearch):
             max_cost_usd=loss_cfg.get("max_cost_usd", 10_000.0),
             hardware_constraints=self.config.get("hardware", {}),
             loss_mode=str(loss_cfg.get("mode", "default")),
+            experiment_config=self.config,
+            loss_config=loss_cfg,
         )
         return EvaluationResult(
             metrics=metrics,

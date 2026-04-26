@@ -43,6 +43,10 @@ class GenerationRecord:
     cma_sigma: float
     mean_eval_time_sec: float = 0.0
     dominant_fidelity: str = "single"
+    best_term_accuracy: float = 0.0
+    best_term_speed: float = 0.0
+    best_term_cost: float = 0.0
+    best_term_coverage: float = 0.0
 
 
 class ExperimentLogger:
@@ -52,6 +56,7 @@ class ExperimentLogger:
         "best_collision_term", "best_blind_term", "best_cost_term",
         "best_cost_usd", "best_n_active", "best_config_summary",
         "population_size", "cma_sigma", "mean_eval_time_sec", "dominant_fidelity",
+        "best_term_accuracy", "best_term_speed", "best_term_cost", "best_term_coverage",
     ]
 
     def __init__(
@@ -97,6 +102,7 @@ class ExperimentLogger:
         dominant_fidelity: str = "single",
     ) -> None:
         arr = np.array(losses)
+        obj = best_result.objectives or {}
         record = GenerationRecord(
             run_id=self.run_id,
             experiment_name=self.experiment_name,
@@ -115,6 +121,10 @@ class ExperimentLogger:
             cma_sigma=round(float(cma_sigma), 6),
             mean_eval_time_sec=round(float(mean_eval_time_sec), 6),
             dominant_fidelity=dominant_fidelity,
+            best_term_accuracy=round(float(obj.get("term_group_accuracy", 0.0) or 0.0), 6),
+            best_term_speed=round(float(obj.get("term_group_speed", 0.0) or 0.0), 6),
+            best_term_cost=round(float(obj.get("term_group_cost", 0.0) or 0.0), 6),
+            best_term_coverage=round(float(obj.get("term_group_coverage", 0.0) or 0.0), 6),
         )
         self.records.append(record)
         self._csv_writer.writerow(asdict(record))

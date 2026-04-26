@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from typing import Any, Dict, Iterable, List
+from typing import Any, Dict, Iterable, List, Optional
 
 from sensor_opt.config.catalog import apply_sensor_catalog
 
@@ -25,7 +25,20 @@ SENSOR_NUMERIC_FIELDS = (
 )
 
 
-def prepare_experiment_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
+def _deep_merge(a: Dict[str, Any], b: Dict[str, Any]) -> Dict[str, Any]:
+    out = deepcopy(a)
+    for k, v in b.items():
+        if k in out and isinstance(out[k], dict) and isinstance(v, dict):
+            out[k] = _deep_merge(out[k], v)
+        else:
+            out[k] = v
+    return out
+
+
+def prepare_experiment_config(
+    cfg: Dict[str, Any],
+    runtime_overrides: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     """
     End-to-end config prep: catalog → `sensor_budget` normalize → (MuJoCo minima)
     → validate.
@@ -37,8 +50,14 @@ def prepare_experiment_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
     the sim (`sensor_opt.inner_loop.mujoco_requirements`) unless
     `inner_loop.mujoco.preserve_sensor_budget_min_count: true`. User **resource**
     caps are `usermax` (or `max_count`) in `sensor_budget`, not `min_count`.
+
+    `runtime_overrides` (optional) deep-merges on top, e.g. `runtime`, `loss`,
+    `max_hardware_budget_usd`, and `inner_loop.mujoco` for notebook / CLI without
+    editing YAML.
     """
     out = deepcopy(apply_sensor_catalog(cfg))
+    if isinstance(runtime_overrides, dict) and runtime_overrides:
+        out = _deep_merge(out, deepcopy(runtime_overrides))
     normalize_sensor_budget_inplace(out)
     apply_mujoco_sim_min_count_inplace(out)
     validate_experiment_specs(out)

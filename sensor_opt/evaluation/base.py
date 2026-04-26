@@ -32,6 +32,7 @@ class BaseEvaluator(ABC):
         sensor_models: dict,
         n_episodes: int = 15,
         rng: Optional[np.random.Generator] = None,
+        generation: int = 0,
     ) -> list[EvalMetrics]:
         """
         Batched evaluation hook.
@@ -39,7 +40,9 @@ class BaseEvaluator(ABC):
         Default implementation falls back to a Python loop to preserve backward
         compatibility. Backends for specific simulators can override this to do
         true batching / vectorized simulation.
+        `generation` is the CMA-ES generation (used by MuJoCo shared obstacle layout).
         """
+        _ = generation
         return [
             self.run(config=c, sensor_models=sensor_models, n_episodes=n_episodes, rng=rng)
             for c in list(configs)
