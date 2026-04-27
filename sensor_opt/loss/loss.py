@@ -96,12 +96,14 @@ def compute_loss(
     experiment_config: dict | None = None,
     loss_config: dict | None = None,
 ) -> LossResult:
-    if loss_mode in ("trial_accuracy", "trial_speed", "trial_multi_objective"):
+    if loss_mode in ("trial_accuracy", "trial_speed", "trial_cost", "trial_multi_objective"):
         from sensor_opt.objectives.trial_objectives import compute_trial_loss
         from sensor_opt.simulation.sensor_specs import get_sensor_specs
 
-        trial_type = "accuracy" if loss_mode == "trial_accuracy" else (
-            "speed" if loss_mode == "trial_speed" else "multi_objective"
+        trial_type = (
+            "accuracy"
+            if loss_mode == "trial_accuracy"
+            else ("speed" if loss_mode == "trial_speed" else ("cost" if loss_mode == "trial_cost" else "multi_objective"))
         )
         tw = (weights or {}).get("trial_weights")
         if tw is None and loss_config and isinstance(loss_config.get("trial_weight_overrides"), dict):
