@@ -19,6 +19,8 @@ _TR_DEFAULT: Dict[str, Dict[str, float]] = {
     "accuracy": {"w_det": 0.4, "w_dist": 0.2, "w_conf": 0.2, "w_cov": 0.2},
     "speed": {"w_lat": 0.4, "w_time": 0.4, "w_cov": 0.2},
     "multi_objective": {"w_acc": 0.4, "w_lat": 0.4, "w_cost": 0.2},
+    # Cost-only: minimize hardware cost fraction (normalized by max budget).
+    "cost": {"w_cost": 1.0},
 }
 
 
@@ -28,6 +30,8 @@ def default_trial_weight_overrides(trial_type: str) -> Dict[str, float]:
         return dict(_TR_DEFAULT["accuracy"])
     if t == "speed":
         return dict(_TR_DEFAULT["speed"])
+    if t == "cost":
+        return dict(_TR_DEFAULT["cost"])
     if t in ("multi_objective", "multi"):
         return dict(_TR_DEFAULT["multi_objective"])
     return {}
@@ -163,6 +167,10 @@ def compute_trial_loss(
             total = MAX_TRIAL_LOSS
         else:
             total = term_acc + term_speed + term_cost
+    elif t == "cost":
+        w = wts
+        term_cost = w.get("w_cost", 1.0) * l_cost
+        total = term_cost
     else:
         total = 1.0
 
@@ -191,7 +199,7 @@ def compute_trial_loss(
         total=float(total),
         collision_term=l_det,
         blind_term=l_time,
-        cost_term=term_cost if t in ("multi_objective", "multi") else 0.0,
+        cost_term=term_cost if t in ("multi_objective", "multi", "cost") else 0.0,
         cost_usd=cost_usd,
         n_active_sensors=n_act,
         config_summary=_layout_summary(config, sensor_models),

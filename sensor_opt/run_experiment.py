@@ -67,6 +67,7 @@ def main():
         tm = {
             "accuracy": "trial_accuracy",
             "speed": "trial_speed",
+            "cost": "trial_cost",
             "multi_objective": "trial_multi_objective",
             "multi": "trial_multi_objective",
         }.get(tt, "trial_multi_objective")
